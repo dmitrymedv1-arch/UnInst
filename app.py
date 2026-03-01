@@ -1585,9 +1585,9 @@ def main():
                     st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
-    
+     
     # ========================================================================
-    # STEP 2: YEAR SELECTION
+    # STEP 2: YEAR SELECTION (ИСПРАВЛЕННАЯ ВЕРСИЯ)
     # ========================================================================
     
     elif st.session_state['step'] == 2:
@@ -1658,35 +1658,8 @@ def main():
                                 if total > 0:
                                     expanded = expand_year_range(years)
                                     
-                                    # Show warning for large datasets
-                                    if total > WARN_PAPERS_THRESHOLD:
-                                        st.markdown(f"""
-                                        <div class="warning-box">
-                                            <strong>⚠️ Large Dataset Warning</strong><br>
-                                            Found {total:,} papers. Analysis will be limited to {MAX_PAPERS_TO_ANALYZE:,} papers for performance.
-                                            This may take several minutes.
-                                        </div>
-                                        """, unsafe_allow_html=True)
-                                    else:
-                                        st.markdown(f"""
-                                        <div class="success-box">
-                                            <strong>✅ Data found</strong><br>
-                                            Total papers (with expanded filter): {total:,}<br>
-                                            OpenAlex search period: {min(expanded)}-{max(expanded)}
-                                        </div>
-                                        """, unsafe_allow_html=True)
-                                    
-                                    # Add a button to proceed
-                                    if st.button("Start Analysis →", type="primary"):
-                                        st.session_state['step'] = 3
-                                        st.rerun()
-                                else:
-                                    st.markdown(f"""
-                                    <div class="warning-box">
-                                        ⚠️ No papers found for this period<br>
-                                        Try expanding the time range
-                                    </div>
-                                    """, unsafe_allow_html=True)
+                                    # Clear any previous error/success messages by rerunning
+                                    st.rerun()
                     else:
                         st.markdown("""
                         <div class="error-box">
@@ -1699,6 +1672,35 @@ def main():
                         ❌ Please enter analysis period
                     </div>
                     """, unsafe_allow_html=True)
+        
+        # Show results and Start Analysis button if we have data
+        if st.session_state['years_range'] and st.session_state['total_papers'] > 0:
+            expanded = expand_year_range(st.session_state['years_range'])
+            
+            # Show warning for large datasets
+            if st.session_state['total_papers'] > WARN_PAPERS_THRESHOLD:
+                st.markdown(f"""
+                <div class="warning-box">
+                    <strong>⚠️ Large Dataset Warning</strong><br>
+                    Found {st.session_state['total_papers']:,} papers. Analysis will be limited to {MAX_PAPERS_TO_ANALYZE:,} papers for performance.
+                    This may take several minutes.
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div class="success-box">
+                    <strong>✅ Data found</strong><br>
+                    Total papers (with expanded filter): {st.session_state['total_papers']:,}<br>
+                    OpenAlex search period: {min(expanded)}-{max(expanded)}
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Add Start Analysis button
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col2:
+                if st.button("▶️ Start Analysis", type="primary", use_container_width=True):
+                    st.session_state['step'] = 3
+                    st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -2126,3 +2128,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
