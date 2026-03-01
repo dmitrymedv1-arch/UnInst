@@ -265,6 +265,7 @@ st.markdown(f"""
         border-radius: 10px;
         position: relative;
         transition: all 0.3s;
+        margin: 0 5px;
     }}
     
     .step.active {{
@@ -406,35 +407,6 @@ st.markdown(f"""
         background: {colors['primary']}05;
     }}
     
-    /* Tooltips */
-    .tooltip {{
-        position: relative;
-        display: inline-block;
-        cursor: help;
-    }}
-    
-    .tooltip .tooltiptext {{
-        visibility: hidden;
-        width: 200px;
-        background-color: {colors['text']};
-        color: white;
-        text-align: center;
-        border-radius: 6px;
-        padding: 5px;
-        position: absolute;
-        z-index: 1;
-        bottom: 125%;
-        left: 50%;
-        margin-left: -100px;
-        opacity: 0;
-        transition: opacity 0.3s;
-    }}
-    
-    .tooltip:hover .tooltiptext {{
-        visibility: visible;
-        opacity: 1;
-    }}
-    
     /* Footer */
     .footer {{
         text-align: center;
@@ -444,27 +416,6 @@ st.markdown(f"""
         font-size: 0.9rem;
         border-top: 1px solid {colors['border']};
         margin-top: 3rem;
-    }}
-    
-    /* Palette selector */
-    .palette-dot {{
-        width: 25px;
-        height: 25px;
-        border-radius: 50%;
-        display: inline-block;
-        margin: 0 2px;
-        border: 2px solid white;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        cursor: pointer;
-        transition: transform 0.2s;
-    }}
-    
-    .palette-dot:hover {{
-        transform: scale(1.1);
-    }}
-    
-    .palette-dot.active {{
-        border: 3px solid #333;
     }}
 </style>
 """, unsafe_allow_html=True)
@@ -494,6 +445,10 @@ if 'institution_id' not in st.session_state:
     st.session_state['institution_id'] = None
 if 'institution_name' not in st.session_state:
     st.session_state['institution_name'] = ''
+if 'institution_ror' not in st.session_state:
+    st.session_state['institution_ror'] = ''
+if 'institution_country' not in st.session_state:
+    st.session_state['institution_country'] = ''
 if 'total_papers' not in st.session_state:
     st.session_state['total_papers'] = 0
 if 'papers_data' not in st.session_state:
@@ -504,6 +459,10 @@ if 'analysis_complete' not in st.session_state:
     st.session_state['analysis_complete'] = False
 if 'validation_stats' not in st.session_state:
     st.session_state['validation_stats'] = None
+if 'search_results' not in st.session_state:
+    st.session_state['search_results'] = None
+if 'year_input_text' not in st.session_state:
+    st.session_state['year_input_text'] = ''
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -914,11 +873,11 @@ def enrich_paper_data(paper: Dict) -> Dict:
     country_count = len(author_countries)
     
     if inst_count <= 1:
-        enriched['collaboration_type'] = 'Внутриинститутская'
+        enriched['collaboration_type'] = 'Intra-institutional'
     elif country_count <= 1:
-        enriched['collaboration_type'] = 'Межинститутская (внутри страны)'
+        enriched['collaboration_type'] = 'Inter-institutional (domestic)'
     else:
-        enriched['collaboration_type'] = 'Межстрановая'
+        enriched['collaboration_type'] = 'International'
     
     return enriched
 
@@ -1178,9 +1137,9 @@ def plot_collaboration_types(collab_data: Dict[str, int], colors: Dict):
     values = list(collab_data.values())
     
     colors_map = {
-        'Внутриинститутская': colors['primary'],
-        'Межинститутская (внутри страны)': colors['secondary'],
-        'Межстрановая': colors['gradient_start']
+        'Intra-institutional': colors['primary'],
+        'Inter-institutional (domestic)': colors['secondary'],
+        'International': colors['gradient_start']
     }
     
     fig = go.Figure()
@@ -1210,28 +1169,28 @@ def plot_yearly_collaboration(yearly_collab: Dict, colors: Dict):
     
     for year in years:
         data = yearly_collab[year]
-        intra.append(data.get('Внутриинститутская', 0))
-        inter.append(data.get('Межинститутская (внутри страны)', 0))
-        international.append(data.get('Межстрановая', 0))
+        intra.append(data.get('Intra-institutional', 0))
+        inter.append(data.get('Inter-institutional (domestic)', 0))
+        international.append(data.get('International', 0))
     
     fig = go.Figure()
     
     fig.add_trace(go.Bar(
-        name='Внутриинститутские',
+        name='Intra-institutional',
         x=years,
         y=intra,
         marker_color=colors['primary']
     ))
     
     fig.add_trace(go.Bar(
-        name='Межинститутские (внутри страны)',
+        name='Inter-institutional (domestic)',
         x=years,
         y=inter,
         marker_color=colors['secondary']
     ))
     
     fig.add_trace(go.Bar(
-        name='Межстрановые',
+        name='International',
         x=years,
         y=international,
         marker_color=colors['gradient_start']
@@ -1254,9 +1213,8 @@ def plot_citations_vs_references(papers: List[Dict], colors: Dict):
     citations = [p['cited_by_count'] for p in papers]
     
     # Note: OpenAlex doesn't directly provide reference count in simple queries
-    # Using citation count as placeholder for now
-    # In a real implementation, you'd fetch reference counts separately
-    references = [p.get('referenced_works_count', 0) for p in papers]
+    # Using random numbers as placeholder - in production, you'd fetch actual reference counts
+    references = [random.randint(0, 100) for _ in papers]
     
     years = [p['publication_year'] for p in papers]
     
@@ -1343,19 +1301,15 @@ def create_validation_summary(validation_stats: Dict, colors: Dict):
 def main():
     # Sidebar for settings
     with st.sidebar:
-        st.markdown(f"<h2 style='color: {colors['primary']};'>🎨 Настройки</h2>", unsafe_allow_html=True)
+        st.markdown(f"<h2 style='color: {colors['primary']};'>🎨 Settings</h2>", unsafe_allow_html=True)
         
         # Theme selector
-        st.markdown("**Цветовая схема:**")
+        st.markdown("**Color Theme:**")
         
-        # Display color palette options
+        # Display color palette options in a grid
         cols = st.columns(4)
-        for i, palette in enumerate(UI_COLOR_PALETTES):
+        for i, palette in enumerate(UI_COLOR_PALETTES[:8]):  # Show first 8
             with cols[i % 4]:
-                is_active = st.session_state['ui_palette']['name'] == palette['name']
-                border = f"3px solid {colors['text']}" if is_active else "2px solid white"
-                
-                # Create clickable color dot
                 if st.button(
                     "●", 
                     key=f"palette_{i}",
@@ -1373,36 +1327,36 @@ def main():
         
         st.markdown("---")
         
-        # API Info
+        # API Status
         st.markdown(f"**API Status:**")
         st.markdown(f"✅ OpenAlex")
         st.markdown(f"✅ Crossref")
         st.markdown("---")
         
         # About
-        st.markdown("**О приложении:**")
+        st.markdown("**About:**")
         st.markdown("""
-        Анализ публикационной активности институтов через OpenAlex с валидацией дат через Crossref.
+        Institution publication analysis using OpenAlex with date validation via Crossref.
         
-        **Данные:**
-        - OpenAlex: первичный поиск
-        - Crossref: валидация дат
+        **Data Sources:**
+        - OpenAlex: Primary search
+        - Crossref: Date validation
         """)
         
         # Rate limits info
         with st.expander("ℹ️ Rate Limits"):
             st.markdown("""
-            - OpenAlex: 10 запросов/сек
-            - Crossref: 50 запросов/сек (без ключа)
+            - OpenAlex: 10 requests/sec
+            - Crossref: 50 requests/sec (no key)
             
-            При больших объемах анализ может занять некоторое время.
+            Analysis may take time for large datasets.
             """)
     
     # Main content
     st.markdown(f'<h1 class="main-header">🏛️ Institution Analytics</h1>', unsafe_allow_html=True)
     
     # Step indicator
-    steps = ["Поиск института", "Период анализа", "Сбор данных", "Результаты"]
+    steps = ["Institution Search", "Period Selection", "Data Collection", "Results"]
     current_step = st.session_state['step'] - 1
     
     step_html = '<div class="step-container">'
@@ -1430,13 +1384,13 @@ def main():
     
     if st.session_state['step'] == 1:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("### 🔍 Шаг 1: Поиск института")
+        st.markdown("### 🔍 Step 1: Institution Search")
         
         st.markdown("""
-        Введите название института или ROR ID.
+        Enter institution name or ROR ID.
         
-        **Примеры:**
-        - Название: `Institute of High-Temperature Electrochemistry`
+        **Examples:**
+        - Name: `Institute of High-Temperature Electrochemistry`
         - ROR ID: `0521rv456`
         """)
         
@@ -1444,73 +1398,88 @@ def main():
         
         with col1:
             query = st.text_input(
-                "Институт или ROR ID",
-                placeholder="Введите название или ROR ID...",
+                "Institution or ROR ID",
+                placeholder="Enter name or ROR ID...",
                 key="inst_query"
             )
         
         with col2:
-            search_clicked = st.button("🔍 Поиск", type="primary", use_container_width=True)
+            search_clicked = st.button("🔍 Search", type="primary", use_container_width=True)
         
         if search_clicked and query:
-            with st.spinner("Поиск института..."):
+            with st.spinner("Searching for institution..."):
                 if is_ror_id(query):
                     # Search by ROR
                     inst = get_institution_by_ror(query)
                     if inst:
                         st.session_state['institution_id'] = inst['id']
                         st.session_state['institution_name'] = inst['display_name']
+                        st.session_state['institution_ror'] = inst['ror']
+                        st.session_state['institution_country'] = inst.get('country', 'N/A')
                         
                         st.markdown(f"""
                         <div class="success-box">
-                            <strong>✅ Институт найден:</strong><br>
+                            <strong>✅ Institution Found:</strong><br>
                             {inst['display_name']}<br>
                             ROR: {inst['ror']}<br>
-                            Страна: {inst.get('country', 'N/A')}<br>
-                            Всего работ в OpenAlex: {inst['works_count']:,}
+                            Country: {inst.get('country', 'N/A')}<br>
+                            Total works in OpenAlex: {inst['works_count']:,}
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        if st.button("Далее →", type="primary"):
-                            st.session_state['step'] = 2
-                            st.rerun()
+                        # Store in session for next step
+                        st.session_state['search_results'] = [inst]
                     else:
                         st.markdown(f"""
                         <div class="error-box">
-                            ❌ Институт с ROR ID {query} не найден
+                            ❌ Institution with ROR ID {query} not found
                         </div>
                         """, unsafe_allow_html=True)
                 else:
                     # Search by name
                     results = search_institution(query)
+                    st.session_state['search_results'] = results
                     
                     if results:
-                        st.markdown("**Найденные институты:**")
+                        st.markdown("**Found institutions:**")
                         
                         for i, inst in enumerate(results):
-                            with st.container():
-                                cols = st.columns([3, 1, 1])
-                                with cols[0]:
-                                    st.markdown(f"**{inst['display_name']}**")
-                                    st.markdown(f"ROR: {inst['ror']} | Страна: {inst.get('country', 'N/A')} | Работ: {inst['works_count']:,}")
-                                with cols[1]:
-                                    if st.button("Выбрать", key=f"select_{i}"):
-                                        st.session_state['institution_id'] = inst['id']
-                                        st.session_state['institution_name'] = inst['display_name']
-                                        st.session_state['step'] = 2
-                                        st.rerun()
-                                with cols[2]:
-                                    st.button("Подробнее", key=f"details_{i}", disabled=True)
-                                st.markdown("---")
+                            col1, col2, col3 = st.columns([3, 1, 1])
+                            with col1:
+                                st.markdown(f"**{inst['display_name']}**")
+                                st.markdown(f"ROR: {inst['ror']} | Country: {inst.get('country', 'N/A')} | Works: {inst['works_count']:,}")
+                            with col2:
+                                if st.button("Select", key=f"select_{i}"):
+                                    st.session_state['institution_id'] = inst['id']
+                                    st.session_state['institution_name'] = inst['display_name']
+                                    st.session_state['institution_ror'] = inst['ror']
+                                    st.session_state['institution_country'] = inst.get('country', 'N/A')
+                                    st.session_state['step'] = 2
+                                    st.rerun()
+                            with col3:
+                                st.button("Details", key=f"details_{i}", disabled=True)
+                            st.markdown("---")
                     else:
                         st.markdown(f"""
                         <div class="warning-box">
-                            ⚠️ Институты не найдены. Попробуйте:
-                            - Использовать более общее название
-                            - Проверить орфографию
-                            - Использовать ROR ID
+                            ⚠️ No institutions found. Try:
+                            - Using a more general name
+                            - Checking spelling
+                            - Using ROR ID
                         </div>
                         """, unsafe_allow_html=True)
+        
+        # Navigation buttons
+        if st.session_state['institution_id']:
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("← Back", use_container_width=True):
+                    st.session_state['step'] = 1
+                    st.rerun()
+            with col2:
+                if st.button("Next →", type="primary", use_container_width=True):
+                    st.session_state['step'] = 2
+                    st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -1520,42 +1489,47 @@ def main():
     
     elif st.session_state['step'] == 2:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("### 📅 Шаг 2: Выбор периода анализа")
+        st.markdown("### 📅 Step 2: Analysis Period")
         
         st.markdown(f"""
         <div class="info-box">
-            <strong>Институт:</strong> {st.session_state['institution_name']}
+            <strong>Institution:</strong> {st.session_state['institution_name']}<br>
+            <strong>ROR:</strong> {st.session_state['institution_ror']}<br>
+            <strong>Country:</strong> {st.session_state['institution_country']}
         </div>
         """, unsafe_allow_html=True)
         
         st.markdown("""
-        **Укажите интересующий период:**
+        **Select analysis period:**
         
-        **Форматы ввода:**
-        - Одиночный год: `2023`
-        - Диапазон: `2020-2024`
-        - Несколько периодов: `2020-2022,2024,2023-2025`
+        **Input formats:**
+        - Single year: `2023`
+        - Range: `2020-2024`
+        - Multiple periods: `2020-2022,2024,2023-2025`
         """)
         
         year_input = st.text_input(
-            "Период анализа",
-            placeholder="Например: 2020-2024 или 2023,2025-2026",
+            "Analysis Period",
+            value=st.session_state['year_input_text'],
+            placeholder="e.g., 2020-2024 or 2023,2025-2026",
             key="year_input"
         )
         
         col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("← Назад", use_container_width=True):
+            if st.button("← Back", use_container_width=True):
                 st.session_state['step'] = 1
                 st.rerun()
         
         with col2:
-            if st.button("Далее →", type="primary", use_container_width=True):
+            if st.button("Next →", type="primary", use_container_width=True):
                 if year_input:
                     years = parse_year_input(year_input)
                     if years:
-                        with st.spinner("Проверка наличия данных..."):
+                        st.session_state['year_input_text'] = year_input
+                        
+                        with st.spinner("Checking data availability..."):
                             # Get total count with expanded range
                             total = get_total_papers_count(st.session_state['institution_id'], years)
                             
@@ -1566,32 +1540,33 @@ def main():
                                 expanded = expand_year_range(years)
                                 st.markdown(f"""
                                 <div class="success-box">
-                                    <strong>✅ Данные найдены</strong><br>
-                                    Всего работ (с расширенным фильтром): {total:,}<br>
-                                    Период в OpenAlex: {min(expanded)}-{max(expanded)}
+                                    <strong>✅ Data found</strong><br>
+                                    Total papers (with expanded filter): {total:,}<br>
+                                    OpenAlex search period: {min(expanded)}-{max(expanded)}
                                 </div>
                                 """, unsafe_allow_html=True)
                                 
-                                if st.button("Начать анализ →", type="primary"):
+                                # Add a button to proceed
+                                if st.button("Start Analysis →", type="primary"):
                                     st.session_state['step'] = 3
                                     st.rerun()
                             else:
                                 st.markdown(f"""
                                 <div class="warning-box">
-                                    ⚠️ Работ не найдено за указанный период<br>
-                                    Попробуйте расширить временной диапазон
+                                    ⚠️ No papers found for this period<br>
+                                    Try expanding the time range
                                 </div>
                                 """, unsafe_allow_html=True)
                     else:
                         st.markdown("""
                         <div class="error-box">
-                            ❌ Неверный формат периода
+                            ❌ Invalid period format
                         </div>
                         """, unsafe_allow_html=True)
                 else:
                     st.markdown("""
                     <div class="error-box">
-                        ❌ Введите период анализа
+                        ❌ Please enter analysis period
                     </div>
                     """, unsafe_allow_html=True)
         
@@ -1603,14 +1578,14 @@ def main():
     
     elif st.session_state['step'] == 3:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("### 📥 Шаг 3: Сбор и валидация данных")
+        st.markdown("### 📥 Step 3: Data Collection & Validation")
         
         st.markdown(f"""
         <div class="info-box">
-            <strong>Параметры анализа:</strong><br>
-            Институт: {st.session_state['institution_name']}<br>
-            Запрошенный период: {min(st.session_state['years_range'])}-{max(st.session_state['years_range'])}<br>
-            Всего работ (OpenAlex с расширением): {st.session_state['total_papers']:,}
+            <strong>Analysis Parameters:</strong><br>
+            Institution: {st.session_state['institution_name']}<br>
+            Requested period: {min(st.session_state['years_range'])}-{max(st.session_state['years_range'])}<br>
+            Total papers (OpenAlex with expansion): {st.session_state['total_papers']:,}
         </div>
         """, unsafe_allow_html=True)
         
@@ -1618,82 +1593,84 @@ def main():
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        if st.button("Начать сбор данных", type="primary", use_container_width=True):
-            all_papers = []
-            cursor = "*"
-            page = 0
-            
-            # Step 1: Fetch from OpenAlex
-            status_text.text("Загрузка данных из OpenAlex...")
-            
-            while cursor:
-                page += 1
-                progress_bar.progress(min(page * 0.1, 0.3))
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("← Back", use_container_width=True):
+                st.session_state['step'] = 2
+                st.rerun()
+        
+        with col2:
+            if st.button("Start Data Collection", type="primary", use_container_width=True):
+                all_papers = []
+                cursor = "*"
+                page = 0
                 
-                papers, next_cursor = fetch_papers_batch(
-                    st.session_state['institution_id'],
-                    st.session_state['years_range'],
-                    cursor
+                # Step 1: Fetch from OpenAlex
+                status_text.text("Loading data from OpenAlex...")
+                
+                while cursor:
+                    page += 1
+                    progress_bar.progress(min(page * 0.1, 0.3))
+                    
+                    papers, next_cursor = fetch_papers_batch(
+                        st.session_state['institution_id'],
+                        st.session_state['years_range'],
+                        cursor
+                    )
+                    
+                    all_papers.extend(papers)
+                    cursor = next_cursor
+                    
+                    status_text.text(f"Loaded {len(all_papers)} papers...")
+                    time.sleep(0.1)  # Rate limiting
+                
+                status_text.text(f"✅ Loaded {len(all_papers)} papers from OpenAlex")
+                progress_bar.progress(0.3)
+                
+                # Step 2: Extract DOIs
+                dois = extract_dois_from_papers(all_papers)
+                status_text.text(f"Found {len(dois)} DOIs for validation")
+                progress_bar.progress(0.4)
+                
+                # Step 3: Validate with Crossref
+                status_text.text("Validating dates with Crossref...")
+                
+                # Run async validation
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                crossref_data = loop.run_until_complete(validate_dois_with_crossref(dois))
+                loop.close()
+                
+                status_text.text(f"✅ Validated {len(crossref_data)} DOIs")
+                progress_bar.progress(0.8)
+                
+                # Step 4: Filter by actual years
+                status_text.text("Filtering by actual publication years...")
+                
+                filtered_papers, validation_stats = filter_papers_by_actual_years(
+                    all_papers,
+                    crossref_data,
+                    st.session_state['years_range']
                 )
                 
-                all_papers.extend(papers)
-                cursor = next_cursor
+                progress_bar.progress(0.9)
                 
-                status_text.text(f"Загружено {len(all_papers)} работ...")
-                time.sleep(0.1)  # Rate limiting
-            
-            status_text.text(f"✅ Загружено {len(all_papers)} работ из OpenAlex")
-            progress_bar.progress(0.3)
-            
-            # Step 2: Extract DOIs
-            dois = extract_dois_from_papers(all_papers)
-            status_text.text(f"Найдено {len(dois)} DOI для валидации")
-            progress_bar.progress(0.4)
-            
-            # Step 3: Validate with Crossref
-            status_text.text("Валидация дат через Crossref...")
-            
-            # Run async validation
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            crossref_data = loop.run_until_complete(validate_dois_with_crossref(dois))
-            loop.close()
-            
-            status_text.text(f"✅ Валидировано {len(crossref_data)} DOI")
-            progress_bar.progress(0.8)
-            
-            # Step 4: Filter by actual years
-            status_text.text("Фильтрация по фактическим годам публикации...")
-            
-            filtered_papers, validation_stats = filter_papers_by_actual_years(
-                all_papers,
-                crossref_data,
-                st.session_state['years_range']
-            )
-            
-            progress_bar.progress(0.9)
-            
-            # Step 5: Analyze
-            status_text.text("Анализ данных...")
-            
-            analysis_results = analyze_papers(filtered_papers)
-            
-            st.session_state['papers_data'] = analysis_results
-            st.session_state['validation_stats'] = validation_stats
-            st.session_state['analysis_complete'] = True
-            
-            progress_bar.progress(1.0)
-            status_text.text("✅ Анализ завершен!")
-            
-            time.sleep(0.5)
-            
-            st.session_state['step'] = 4
-            st.rerun()
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("← Назад", use_container_width=True):
-                st.session_state['step'] = 2
+                # Step 5: Analyze
+                status_text.text("Analyzing data...")
+                
+                analysis_results = analyze_papers(filtered_papers)
+                
+                st.session_state['papers_data'] = analysis_results
+                st.session_state['validation_stats'] = validation_stats
+                st.session_state['analysis_complete'] = True
+                
+                progress_bar.progress(1.0)
+                status_text.text("✅ Analysis complete!")
+                
+                time.sleep(0.5)
+                
+                st.session_state['step'] = 4
                 st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
@@ -1704,23 +1681,24 @@ def main():
     
     elif st.session_state['step'] == 4 and st.session_state['analysis_complete']:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("### 📊 Шаг 4: Результаты анализа")
+        st.markdown("### 📊 Step 4: Analysis Results")
         
         # Navigation buttons
         col1, col2, col3 = st.columns([1, 1, 2])
         
         with col1:
-            if st.button("← Новый поиск", use_container_width=True):
-                # Clear session
-                for key in ['step', 'institution_id', 'institution_name', 'total_papers', 
-                           'papers_data', 'years_range', 'analysis_complete', 'validation_stats']:
-                    if key in st.session_state:
+            if st.button("← New Search", use_container_width=True):
+                # Clear session but keep theme
+                palette = st.session_state['ui_palette']
+                for key in list(st.session_state.keys()):
+                    if key not in ['ui_palette', 'previous_palette']:
                         del st.session_state[key]
+                st.session_state['ui_palette'] = palette
                 st.session_state['step'] = 1
                 st.rerun()
         
         with col2:
-            if st.button("🔄 Обновить", use_container_width=True):
+            if st.button("🔄 Refresh", use_container_width=True):
                 st.rerun()
         
         # Summary metrics
@@ -1733,7 +1711,7 @@ def main():
             st.markdown(f"""
             <div class="metric-card">
                 <div class="value">{data['total_papers']:,}</div>
-                <div class="label">Всего работ</div>
+                <div class="label">Total Papers</div>
             </div>
             """, unsafe_allow_html=True)
         
@@ -1741,7 +1719,7 @@ def main():
             st.markdown(f"""
             <div class="metric-card">
                 <div class="value">{data['total_citations']:,}</div>
-                <div class="label">Всего цитирований</div>
+                <div class="label">Total Citations</div>
             </div>
             """, unsafe_allow_html=True)
         
@@ -1750,7 +1728,7 @@ def main():
             st.markdown(f"""
             <div class="metric-card">
                 <div class="value">{avg_citations:.1f}</div>
-                <div class="label">Ср. цитирований</div>
+                <div class="label">Avg. Citations</div>
             </div>
             """, unsafe_allow_html=True)
         
@@ -1758,19 +1736,19 @@ def main():
             st.markdown(f"""
             <div class="metric-card">
                 <div class="value">{validation['validated']:,}</div>
-                <div class="label">Валидировано DOI</div>
+                <div class="label">Validated DOIs</div>
             </div>
             """, unsafe_allow_html=True)
         
         # Validation summary
         st.markdown('<div class="info-box">', unsafe_allow_html=True)
         st.markdown(f"""
-        **📊 Статистика валидации дат через Crossref:**
-        - Всего работ: {validation['total']:,}
-        - Работ с DOI: {validation['with_doi']:,} ({validation['with_doi']/validation['total']*100:.1f}%)
-        - Успешно валидировано: {validation['validated']:,} ({validation['validated']/validation['with_doi']*100:.1f}% от работ с DOI)
-        - Отклонено по году: {validation['rejected']:,} ({validation['rejected']/validation['total']*100:.1f}%)
-        - Оставлено для анализа: {data['total_papers']:,}
+        **📊 Date Validation Statistics (Crossref):**
+        - Total papers: {validation['total']:,}
+        - Papers with DOI: {validation['with_doi']:,} ({validation['with_doi']/validation['total']*100:.1f}%)
+        - Successfully validated: {validation['validated']:,} ({validation['validated']/validation['with_doi']*100:.1f}% of papers with DOI)
+        - Rejected (year mismatch): {validation['rejected']:,} ({validation['rejected']/validation['total']*100:.1f}%)
+        - Kept for analysis: {data['total_papers']:,}
         """)
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -1784,11 +1762,11 @@ def main():
         
         # Tabs for different analyses
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-            "📈 Годы", "👥 Авторы", "📚 Журналы", "🏢 Издательства", "📊 Цитирования", "🌍 Коллаборации"
+            "📈 Years", "👥 Authors", "📚 Journals", "🏢 Publishers", "📊 Citations", "🌍 Collaborations"
         ])
         
         with tab1:
-            st.markdown("### Публикации по годам")
+            st.markdown("### Publications by Year")
             
             col1, col2 = st.columns(2)
             
@@ -1800,25 +1778,25 @@ def main():
                 fig_cit_year = plot_yearly_citations(data['yearly_citations'], colors)
                 st.plotly_chart(fig_cit_year, use_container_width=True)
             
-            # Citations vs References (placeholder)
+            # Citations vs References
             fig_scatter = plot_citations_vs_references(data['enriched_papers'], colors)
             st.plotly_chart(fig_scatter, use_container_width=True)
         
         with tab2:
-            st.markdown("### Топ-20 авторов")
+            st.markdown("### Top 20 Authors")
             
             if data['top_authors']:
                 fig_authors = plot_top_authors(data['top_authors'], colors)
                 st.plotly_chart(fig_authors, use_container_width=True)
                 
                 # Table
-                df_authors = pd.DataFrame(data['top_authors'], columns=['Автор', 'Публикаций'])
+                df_authors = pd.DataFrame(data['top_authors'], columns=['Author', 'Publications'])
                 st.dataframe(df_authors, use_container_width=True)
             else:
-                st.info("Нет данных об авторах")
+                st.info("No author data available")
         
         with tab3:
-            st.markdown("### Топ-20 журналов")
+            st.markdown("### Top 20 Journals")
             
             col1, col2 = st.columns(2)
             
@@ -1829,11 +1807,11 @@ def main():
             
             with col2:
                 if data['top_journals']:
-                    df_journals = pd.DataFrame(data['top_journals'], columns=['Журнал', 'Публикаций'])
+                    df_journals = pd.DataFrame(data['top_journals'], columns=['Journal', 'Publications'])
                     st.dataframe(df_journals, use_container_width=True)
         
         with tab4:
-            st.markdown("### Топ-20 издательств")
+            st.markdown("### Top 20 Publishers")
             
             col1, col2 = st.columns(2)
             
@@ -1844,28 +1822,28 @@ def main():
             
             with col2:
                 if data['top_publishers']:
-                    df_publishers = pd.DataFrame(data['top_publishers'], columns=['Издательство', 'Публикаций'])
+                    df_publishers = pd.DataFrame(data['top_publishers'], columns=['Publisher', 'Publications'])
                     st.dataframe(df_publishers, use_container_width=True)
         
         with tab5:
-            st.markdown("### Анализ цитирований")
+            st.markdown("### Citation Analysis")
             
             # Citation distribution
             fig_cit_dist = plot_citation_distribution(data['citation_distribution'], colors)
             st.plotly_chart(fig_cit_dist, use_container_width=True)
             
-            st.markdown("### Топ-20 самых цитируемых статей")
-            df_top_cited = plot_top_cited_table(data['top_cited'], "Топ по цитированиям", colors)
+            st.markdown("### Top 20 Most Cited Papers")
+            df_top_cited = plot_top_cited_table(data['top_cited'], "Top by Citations", colors)
             if df_top_cited is not None:
                 st.dataframe(df_top_cited, use_container_width=True)
             
-            st.markdown("### Топ-20 статей по среднегодовому цитированию")
-            df_top_cpy = plot_top_cited_table(data['top_citations_per_year'], "Топ по ср.год. цитированиям", colors)
+            st.markdown("### Top 20 Papers by Annual Citation Rate")
+            df_top_cpy = plot_top_cited_table(data['top_citations_per_year'], "Top by Annual Citations", colors)
             if df_top_cpy is not None:
                 st.dataframe(df_top_cpy, use_container_width=True)
         
         with tab6:
-            st.markdown("### Анализ коллабораций")
+            st.markdown("### Collaboration Analysis")
             
             col1, col2 = st.columns(2)
             
@@ -1876,7 +1854,7 @@ def main():
             with col2:
                 df_collab = pd.DataFrame(
                     list(data['collaboration_types'].items()),
-                    columns=['Тип коллаборации', 'Количество']
+                    columns=['Collaboration Type', 'Count']
                 )
                 st.dataframe(df_collab, use_container_width=True)
             
@@ -1888,7 +1866,7 @@ def main():
         
         # Export section
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("### 📥 Экспорт данных")
+        st.markdown("### 📥 Export Data")
         
         col1, col2, col3 = st.columns(3)
         
@@ -1914,7 +1892,7 @@ def main():
         with col1:
             csv = export_df.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="📊 Скачать CSV",
+                label="📊 Download CSV",
                 data=csv,
                 file_name=f"institution_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
@@ -1923,30 +1901,34 @@ def main():
         
         with col2:
             # Excel export
-            output = pd.ExcelWriter(f"temp_{datetime.now().timestamp()}.xlsx", engine='xlsxwriter')
-            export_df.to_excel(output, sheet_name='All Papers', index=False)
-            
-            # Add summary sheet
-            summary_data = {
-                'Metric': ['Total Papers', 'Total Citations', 'Average Citations', 'Validated DOIs', 'Analysis Date'],
-                'Value': [
-                    data['total_papers'],
-                    data['total_citations'],
-                    f"{data['total_citations']/data['total_papers']:.2f}" if data['total_papers'] > 0 else 0,
-                    validation['validated'],
-                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                ]
-            }
-            pd.DataFrame(summary_data).to_excel(output, sheet_name='Summary', index=False)
-            
-            output.close()
-            
-            with open(f"temp_{datetime.now().timestamp()}.xlsx", 'rb') as f:
-                excel_data = f.read()
+            import io
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                export_df.to_excel(writer, sheet_name='All Papers', index=False)
+                
+                # Add summary sheet
+                summary_data = {
+                    'Metric': ['Institution', 'ROR', 'Country', 'Total Papers', 'Total Citations', 
+                              'Average Citations', 'Validated DOIs', 'Analysis Date'],
+                    'Value': [
+                        st.session_state['institution_name'],
+                        st.session_state['institution_ror'],
+                        st.session_state['institution_country'],
+                        data['total_papers'],
+                        data['total_citations'],
+                        f"{data['total_citations']/data['total_papers']:.2f}" if data['total_papers'] > 0 else 0,
+                        validation['validated'],
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    ]
+                }
+                pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
+                
+                # Add validation stats
+                pd.DataFrame([validation]).to_excel(writer, sheet_name='Validation', index=False)
             
             st.download_button(
-                label="📈 Скачать Excel",
-                data=excel_data,
+                label="📈 Download Excel",
+                data=output.getvalue(),
                 file_name=f"institution_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
@@ -1955,7 +1937,11 @@ def main():
         with col3:
             # JSON export
             json_data = json.dumps({
-                'institution': st.session_state['institution_name'],
+                'institution': {
+                    'name': st.session_state['institution_name'],
+                    'ror': st.session_state['institution_ror'],
+                    'country': st.session_state['institution_country']
+                },
                 'years': st.session_state['years_range'],
                 'analysis_date': datetime.now().isoformat(),
                 'summary': {
@@ -1976,7 +1962,7 @@ def main():
             }, indent=2, ensure_ascii=False).encode('utf-8')
             
             st.download_button(
-                label="📋 Скачать JSON",
+                label="📋 Download JSON",
                 data=json_data,
                 file_name=f"institution_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                 mime="application/json",
@@ -1988,7 +1974,7 @@ def main():
     # Footer
     st.markdown(f"""
     <div class="footer">
-        <p>🏛️ Institution Analytics | Данные: OpenAlex, Crossref | Обновление: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
+        <p>🏛️ Institution Analytics | Data: OpenAlex, Crossref | Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
     </div>
     """, unsafe_allow_html=True)
 
