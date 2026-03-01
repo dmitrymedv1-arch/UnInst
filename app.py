@@ -900,22 +900,26 @@ def enrich_paper_data(paper: Dict) -> Dict:
                 # Get affiliations for collaboration analysis
                 institutions = authorship.get('institutions', [])
                 for inst in institutions:
-                    if inst.get('country_code'):
+                    if inst and inst.get('country_code'):
                         author_countries.add(inst['country_code'])
-                
-                author_affiliations.extend([inst.get('display_name', '') for inst in institutions if inst.get('display_name')])
+                    if inst and inst.get('display_name'):
+                        author_affiliations.append(inst['display_name'])
     
     enriched['authors'] = authors
     enriched['author_count'] = len(authors)
     enriched['author_countries'] = list(author_countries)
     enriched['affiliations'] = list(set(author_affiliations))
     
-    # Journal and publisher
-    primary_location = paper.get('primary_location', {})
-    if primary_location:
-        source = primary_location.get('source', {})
-        enriched['journal'] = source.get('display_name', 'Unknown')
-        enriched['publisher'] = source.get('publisher', 'Unknown')
+    # Journal and publisher - FIXED: Handle None source
+    primary_location = paper.get('primary_location')
+    if primary_location and isinstance(primary_location, dict):
+        source = primary_location.get('source')
+        if source and isinstance(source, dict):
+            enriched['journal'] = source.get('display_name', 'Unknown')
+            enriched['publisher'] = source.get('publisher', 'Unknown')
+        else:
+            enriched['journal'] = 'Unknown'
+            enriched['publisher'] = 'Unknown'
     else:
         enriched['journal'] = 'Unknown'
         enriched['publisher'] = 'Unknown'
@@ -965,7 +969,25 @@ def add_to_recent_institutions(inst: Dict):
 
 def analyze_papers(papers: List[Dict]) -> Dict:
     """Perform comprehensive analysis on papers"""
-    enriched_papers = [enrich_paper_data(p) for p in papers]
+    if not papers:
+        # Return empty results if no papers
+        return {
+            'total_papers': 0,
+            'total_citations': 0,
+            'yearly_papers': {},
+            'yearly_citations': {},
+            'top_authors': [],
+            'top_journals': [],
+            'top_publishers': [],
+            'citation_distribution': {k: 0 for k in ['0', '1-4', '5-10', '11-30', '31-50', '51-100', '100+']},
+            'top_cited': [],
+            'top_citations_per_year': [],
+            'collaboration_types': {},
+            'yearly_collaboration': {},
+            'enriched_papers': []
+        }
+    
+    enriched_papers = [enrich_paper_data(p) for p in papers if p]  # Filter out None papers
     
     # Basic stats
     total_papers = len(enriched_papers)
@@ -976,23 +998,24 @@ def analyze_papers(papers: List[Dict]) -> Dict:
     yearly_citations = defaultdict(int)
     for p in enriched_papers:
         year = p['publication_year']
-        yearly_papers[year] += 1
-        yearly_citations[year] += p['cited_by_count']
+        if year:  # Only process if year exists
+            yearly_papers[year] += 1
+            yearly_citations[year] += p['cited_by_count']
     
     # Authors analysis
     all_authors = []
     for p in enriched_papers:
-        all_authors.extend(p['authors'])
+        all_authors.extend(p.get('authors', []))
     
     author_counts = Counter(all_authors)
     top_authors = author_counts.most_common(20)
     
     # Journals analysis
-    journal_counts = Counter(p['journal'] for p in enriched_papers)
+    journal_counts = Counter(p.get('journal', 'Unknown') for p in enriched_papers)
     top_journals = journal_counts.most_common(20)
     
     # Publishers analysis
-    publisher_counts = Counter(p['publisher'] for p in enriched_papers if p['publisher'])
+    publisher_counts = Counter(p.get('publisher', 'Unknown') for p in enriched_papers if p.get('publisher'))
     top_publishers = publisher_counts.most_common(20)
     
     # Citation distribution
@@ -1008,25 +1031,29 @@ def analyze_papers(papers: List[Dict]) -> Dict:
     }
     
     # Top cited papers
-    top_cited = sorted(enriched_papers, key=lambda x: x['cited_by_count'], reverse=True)[:20]
+    top_cited = sorted(enriched_papers, key=lambda x: x.get('cited_by_count', 0), reverse=True)[:20]
     
     # Top papers by citations per year
     current_year = datetime.now().year
     for p in enriched_papers:
-        p['citations_per_year'] = calculate_citations_per_year(
-            p['cited_by_count'], p['publication_year'], current_year
-        )
+        if p.get('publication_year'):
+            p['citations_per_year'] = calculate_citations_per_year(
+                p.get('cited_by_count', 0), p['publication_year'], current_year
+            )
+        else:
+            p['citations_per_year'] = 0
     
-    top_cpy = sorted(enriched_papers, key=lambda x: x['citations_per_year'], reverse=True)[:20]
+    top_cpy = sorted(enriched_papers, key=lambda x: x.get('citations_per_year', 0), reverse=True)[:20]
     
     # Collaboration analysis
-    collab_types = Counter(p['collaboration_type'] for p in enriched_papers)
+    collab_types = Counter(p.get('collaboration_type', 'Unknown') for p in enriched_papers)
     
     # Yearly collaboration breakdown
     yearly_collab = defaultdict(lambda: defaultdict(int))
     for p in enriched_papers:
-        year = p['publication_year']
-        yearly_collab[year][p['collaboration_type']] += 1
+        year = p.get('publication_year')
+        if year:
+            yearly_collab[year][p.get('collaboration_type', 'Unknown')] += 1
     
     return {
         'total_papers': total_papers,
@@ -2128,4 +2155,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
