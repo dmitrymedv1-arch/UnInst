@@ -11,8 +11,6 @@ matplotlib.use('Agg')
 import re
 import time
 import json
-import asyncio
-import aiohttp
 from datetime import datetime
 from collections import Counter, defaultdict
 from typing import List, Dict, Tuple, Optional, Set, Any
@@ -172,6 +170,8 @@ UI_COLOR_PALETTES = [
 # Initialize or get UI palette from session
 if 'ui_palette' not in st.session_state:
     st.session_state['ui_palette'] = random.choice(UI_COLOR_PALETTES)
+if 'previous_palette' not in st.session_state:
+    st.session_state['previous_palette'] = st.session_state['ui_palette']['name']
 
 # Get current colors
 colors = st.session_state['ui_palette']
@@ -215,6 +215,12 @@ st.markdown(f"""
         box-shadow: 0 8px 20px rgba(0,0,0,0.05);
         border: 1px solid {colors['border']};
         margin-bottom: 1rem;
+        transition: transform 0.2s, box-shadow 0.2s;
+    }}
+    
+    .card:hover {{
+        transform: translateY(-2px);
+        box-shadow: 0 12px 25px rgba(0,0,0,0.1);
     }}
     
     .metric-card {{
@@ -245,7 +251,7 @@ st.markdown(f"""
         display: flex;
         justify-content: space-between;
         margin: 2rem 0;
-        gap: 10px;
+        position: relative;
     }}
     
     .step {{
@@ -255,7 +261,9 @@ st.markdown(f"""
         background: {colors['card_bg']};
         border: 2px solid {colors['border']};
         border-radius: 10px;
+        position: relative;
         transition: all 0.3s;
+        margin: 0 5px;
     }}
     
     .step.active {{
@@ -281,6 +289,39 @@ st.markdown(f"""
     
     .step.completed .step-number {{
         background: {colors['success']};
+    }}
+    
+    /* Buttons */
+    .stButton > button {{
+        background: linear-gradient(135deg, {colors['gradient_start']}, {colors['gradient_end']});
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 0.5rem 2rem;
+        font-weight: 600;
+        transition: all 0.3s;
+        box-shadow: 0 4px 10px {colors['primary']}30;
+    }}
+    
+    .stButton > button:hover {{
+        transform: translateY(-2px);
+        box-shadow: 0 6px 15px {colors['primary']}50;
+    }}
+    
+    .stButton > button:active {{
+        transform: translateY(0);
+    }}
+    
+    /* Secondary button */
+    .stButton > button[kind="secondary"] {{
+        background: white;
+        color: {colors['primary']};
+        border: 2px solid {colors['primary']};
+        box-shadow: none;
+    }}
+    
+    .stButton > button[kind="secondary"]:hover {{
+        background: {colors['primary']}10;
     }}
     
     /* Info boxes */
@@ -316,6 +357,54 @@ st.markdown(f"""
         margin: 1rem 0;
     }}
     
+    /* Tabs styling */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 8px;
+        background-color: {colors['card_bg']};
+        padding: 0.5rem;
+        border-radius: 10px;
+        border: 1px solid {colors['border']};
+    }}
+    
+    .stTabs [data-baseweb="tab"] {{
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        color: {colors['text']};
+    }}
+    
+    .stTabs [aria-selected="true"] {{
+        background: linear-gradient(135deg, {colors['gradient_start']}, {colors['gradient_end']});
+        color: white !important;
+    }}
+    
+    /* Progress bar */
+    .stProgress > div > div > div > div {{
+        background: linear-gradient(90deg, {colors['gradient_start']}, {colors['gradient_end']});
+    }}
+    
+    /* Dataframe styling */
+    .dataframe {{
+        border: 1px solid {colors['border']};
+        border-radius: 10px;
+        overflow: hidden;
+    }}
+    
+    .dataframe th {{
+        background: linear-gradient(135deg, {colors['gradient_start']}, {colors['gradient_end']});
+        color: white;
+        padding: 0.75rem;
+        font-weight: 600;
+    }}
+    
+    .dataframe td {{
+        padding: 0.5rem 0.75rem;
+        border-bottom: 1px solid {colors['border']};
+    }}
+    
+    .dataframe tr:hover {{
+        background: {colors['primary']}05;
+    }}
+    
     /* Footer */
     .footer {{
         text-align: center;
@@ -325,6 +414,22 @@ st.markdown(f"""
         font-size: 0.9rem;
         border-top: 1px solid {colors['border']};
         margin-top: 3rem;
+    }}
+    
+    /* Recent institutions */
+    .recent-inst {{
+        background: {colors['card_bg']};
+        border: 1px solid {colors['border']};
+        border-radius: 8px;
+        padding: 0.5rem;
+        margin: 0.2rem 0;
+        cursor: pointer;
+        transition: all 0.2s;
+    }}
+    
+    .recent-inst:hover {{
+        border-color: {colors['primary']};
+        background: {colors['primary']}05;
     }}
 </style>
 """, unsafe_allow_html=True)
@@ -336,11 +441,22 @@ st.markdown(f"""
 OPENALEX_BASE_URL = "https://api.openalex.org"
 CROSSREF_BASE_URL = "https://api.crossref.org"
 MAILTO = "your-email@example.com"  # Change to your email
-HEADERS = {'User-Agent': f'UnInst-Analytics (mailto:{MAILTO})'}
+HEADERS = {'User-Agent': f'Institution-Analytics (mailto:{MAILTO})'}
 
 # Rate limits
+OPENALEX_RATE_LIMIT = 10  # requests per second
+CROSSREF_RATE_LIMIT = 50  # requests per second
 MAX_RETRIES = 3
 BATCH_SIZE = 100  # for Crossref batch queries
+
+# Data limits
+MAX_PAPERS_TO_ANALYZE = 10000  # Maximum papers to process
+MAX_PAGES = 50  # Maximum pages to fetch (200 papers per page)
+WARN_PAPERS_THRESHOLD = 5000  # Show warning above this
+
+# Recent institutions storage
+if 'recent_institutions' not in st.session_state:
+    st.session_state['recent_institutions'] = []
 
 # ============================================================================
 # SESSION STATE INITIALIZATION
@@ -370,17 +486,48 @@ if 'search_results' not in st.session_state:
     st.session_state['search_results'] = None
 if 'year_input_text' not in st.session_state:
     st.session_state['year_input_text'] = ''
-if 'show_start_analysis' not in st.session_state:
-    st.session_state['show_start_analysis'] = False
+if 'data_collection_started' not in st.session_state:
+    st.session_state['data_collection_started'] = False
 
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
+def normalize_institution_name(name: str) -> str:
+    """Normalize institution name for search"""
+    if not name:
+        return ""
+    # Remove extra spaces, convert to lowercase
+    name = re.sub(r'\s+', ' ', name.strip().lower())
+    # Remove common punctuation
+    name = re.sub(r'[^\w\s-]', '', name)
+    # Handle hyphenated variations
+    name = name.replace('-', ' ')
+    return name
+
 def is_ror_id(text: str) -> bool:
     """Check if text is a valid ROR ID"""
+    # ROR IDs are like: 0521rv456
     pattern = r'^[a-z0-9]{9,10}$'
     return bool(re.match(pattern, text.strip()))
+
+def validate_year_range(years: List[int]) -> Tuple[bool, str]:
+    """Validate year range for reasonableness"""
+    current_year = datetime.now().year
+    
+    if not years:
+        return False, "No years specified"
+    
+    if min(years) < 1900:
+        return False, "Year cannot be before 1900"
+    
+    if max(years) > current_year + 1:
+        return False, f"Year cannot be after {current_year + 1}"
+    
+    if len(years) > 30:
+        return False, "Period cannot exceed 30 years (performance reasons)"
+    
+    return True, "Valid"
 
 @retry(
     stop=stop_after_attempt(MAX_RETRIES),
@@ -408,10 +555,119 @@ def make_openalex_request(url: str, params: Optional[Dict] = None) -> Optional[D
             time.sleep(retry_after)
             raise Exception("Rate limited")
         else:
+            st.error(f"OpenAlex API error: {response.status_code}")
             return None
             
     except Exception as e:
+        st.error(f"Request error: {str(e)}")
         raise
+
+@retry(
+    stop=stop_after_attempt(MAX_RETRIES),
+    wait=wait_exponential(multiplier=1, max=10)
+)
+def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
+    """Make synchronous batch request to Crossref API"""
+    if not dois:
+        return {}
+    
+    # Remove duplicates but preserve original case for return
+    unique_dois = list(set(dois))
+    results = {}
+    
+    # Process in batches
+    for i in range(0, len(unique_dois), BATCH_SIZE):
+        batch = unique_dois[i:i + BATCH_SIZE]
+        
+        # Prepare batch request
+        payload = {"ids": batch}
+        
+        try:
+            response = requests.post(
+                f"{CROSSREF_BASE_URL}/works",
+                json=payload,
+                headers={'Content-Type': 'application/json'},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Parse results
+                for item in data.get('items', []):
+                    doi = item.get('DOI', '')
+                    doi_lower = doi.lower()
+                    
+                    # Extract publication date with priority
+                    pub_date = None
+                    
+                    # Priority 1: published-print
+                    if 'published-print' in item:
+                        date_parts = item['published-print'].get('date-parts', [[]])[0]
+                        if date_parts:
+                            pub_date = {
+                                'year': date_parts[0],
+                                'month': date_parts[1] if len(date_parts) > 1 else 1,
+                                'day': date_parts[2] if len(date_parts) > 2 else 1,
+                                'source': 'published-print'
+                            }
+                    
+                    # Priority 2: published (main date)
+                    elif 'published' in item:
+                        date_parts = item['published'].get('date-parts', [[]])[0]
+                        if date_parts:
+                            pub_date = {
+                                'year': date_parts[0],
+                                'month': date_parts[1] if len(date_parts) > 1 else 1,
+                                'day': date_parts[2] if len(date_parts) > 2 else 1,
+                                'source': 'published'
+                            }
+                    
+                    # Priority 3: published-online
+                    elif 'published-online' in item:
+                        date_parts = item['published-online'].get('date-parts', [[]])[0]
+                        if date_parts:
+                            pub_date = {
+                                'year': date_parts[0],
+                                'month': date_parts[1] if len(date_parts) > 1 else 1,
+                                'day': date_parts[2] if len(date_parts) > 2 else 1,
+                                'source': 'published-online'
+                            }
+                    
+                    # Priority 4: issued
+                    elif 'issued' in item:
+                        date_parts = item['issued'].get('date-parts', [[]])[0]
+                        if date_parts:
+                            pub_date = {
+                                'year': date_parts[0],
+                                'month': date_parts[1] if len(date_parts) > 1 else 1,
+                                'day': date_parts[2] if len(date_parts) > 2 else 1,
+                                'source': 'issued'
+                            }
+                    
+                    if pub_date:
+                        # Store by lowercase DOI for lookup, but preserve original for display
+                        results[doi_lower] = {
+                            'doi': doi,  # Store original case
+                            'doi_lower': doi_lower,
+                            'year': pub_date['year'],
+                            'month': pub_date['month'],
+                            'day': pub_date['day'],
+                            'source': pub_date['source'],
+                            'title': item.get('title', [''])[0] if item.get('title') else '',
+                            'container-title': item.get('container-title', [''])[0] if item.get('container-title') else '',
+                            'publisher': item.get('publisher', ''),
+                            'type': item.get('type', '')
+                        }
+            
+            # Rate limiting
+            time.sleep(0.1)  # 10 requests per second max
+            
+        except Exception as e:
+            st.warning(f"Error validating batch {i//BATCH_SIZE + 1}: {str(e)}")
+            continue
+    
+    return results
 
 def search_institution(query: str) -> List[Dict]:
     """Search for institutions in OpenAlex"""
@@ -467,23 +723,29 @@ def expand_year_range(years: List[int]) -> List[int]:
     return sorted(list(expanded))
 
 def parse_year_input(year_str: str) -> List[int]:
-    """Parse year input from user"""
+    """Parse year input from user (e.g., '2023', '2023-2026', '2022-2024,2026')"""
     years = set()
+    
+    # Split by commas
     parts = year_str.replace(' ', '').split(',')
     
     for part in parts:
         if '-' in part:
+            # Range
             start, end = part.split('-')
             try:
                 start_year = int(start)
                 end_year = int(end)
                 years.update(range(start_year, end_year + 1))
             except ValueError:
+                st.error(f"Invalid year range: {part}")
                 return []
         else:
+            # Single year
             try:
                 years.add(int(part))
             except ValueError:
+                st.error(f"Invalid year: {part}")
                 return []
     
     return sorted(list(years))
@@ -505,8 +767,8 @@ def get_total_papers_count(institution_id: str, years: List[int]) -> int:
     
     return 0
 
-def fetch_papers_batch(institution_id: str, years: List[int], cursor: str = "*") -> Tuple[List[Dict], Optional[str]]:
-    """Fetch a batch of papers from OpenAlex"""
+def fetch_papers_batch(institution_id: str, years: List[int], cursor: str = "*") -> Tuple[List[Dict], Optional[str], int]:
+    """Fetch a batch of papers from OpenAlex, returns (papers, next_cursor, count_in_batch)"""
     expanded_years = expand_year_range(years)
     year_filter = f"publication_year:{min(expanded_years)}-{max(expanded_years)}"
     
@@ -521,96 +783,20 @@ def fetch_papers_batch(institution_id: str, years: List[int], cursor: str = "*")
     
     if data and 'results' in data:
         next_cursor = data.get('meta', {}).get('next_cursor')
-        return data['results'], next_cursor
+        return data['results'], next_cursor, len(data['results'])
     
-    return [], None
+    return [], None, 0
 
 def extract_dois_from_papers(papers: List[Dict]) -> List[str]:
-    """Extract DOIs from papers"""
+    """Extract DOIs from papers, preserving original case"""
     dois = []
     for paper in papers:
         doi = paper.get('doi', '')
         if doi:
+            # Clean DOI (remove URL prefix if present) but preserve case
             doi = doi.replace('https://doi.org/', '').replace('http://doi.org/', '')
             dois.append(doi)
     return dois
-
-async def validate_dois_with_crossref(dois: List[str], batch_size: int = 100) -> Dict[str, Dict]:
-    """Validate DOIs with Crossref in batches"""
-    if not dois:
-        return {}
-    
-    results = {}
-    dois = list(set(dois))
-    batches = [dois[i:i + batch_size] for i in range(0, len(dois), batch_size)]
-    
-    async with aiohttp.ClientSession() as session:
-        for batch in batches:
-            payload = {"ids": batch}
-            
-            try:
-                async with session.post(
-                    f"{CROSSREF_BASE_URL}/works",
-                    json=payload,
-                    headers={'Content-Type': 'application/json'}
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        
-                        for item in data.get('items', []):
-                            doi = item.get('DOI', '').lower()
-                            pub_date = None
-                            
-                            if 'published-print' in item:
-                                date_parts = item['published-print'].get('date-parts', [[]])[0]
-                                if date_parts:
-                                    pub_date = {
-                                        'year': date_parts[0],
-                                        'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                        'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                        'source': 'published-print'
-                                    }
-                            elif 'published' in item:
-                                date_parts = item['published'].get('date-parts', [[]])[0]
-                                if date_parts:
-                                    pub_date = {
-                                        'year': date_parts[0],
-                                        'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                        'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                        'source': 'published'
-                                    }
-                            elif 'published-online' in item:
-                                date_parts = item['published-online'].get('date-parts', [[]])[0]
-                                if date_parts:
-                                    pub_date = {
-                                        'year': date_parts[0],
-                                        'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                        'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                        'source': 'published-online'
-                                    }
-                            elif 'issued' in item:
-                                date_parts = item['issued'].get('date-parts', [[]])[0]
-                                if date_parts:
-                                    pub_date = {
-                                        'year': date_parts[0],
-                                        'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                        'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                        'source': 'issued'
-                                    }
-                            
-                            if pub_date:
-                                results[doi] = {
-                                    'doi': doi,
-                                    'year': pub_date['year'],
-                                    'source': pub_date['source']
-                                }
-                    
-                    await asyncio.sleep(0.1)
-                    
-            except Exception as e:
-                continue
-    
-    return results
 
 def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, Dict], target_years: List[int]) -> Tuple[List[Dict], Dict]:
     """Filter papers by actual publication years from Crossref"""
@@ -630,7 +816,13 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
         doi = paper.get('doi', '').replace('https://doi.org/', '').replace('http://doi.org/', '')
         
         if not doi:
+            # No DOI - keep with OpenAlex year but mark as unvalidated
             validation_stats['no_doi'] += 1
+            paper['_validation'] = {
+                'source': 'openalex_only',
+                'year': paper.get('publication_year'),
+                'kept': paper.get('publication_year') in target_years
+            }
             if paper.get('publication_year') in target_years:
                 filtered_papers.append(paper)
                 validation_stats['kept'] += 1
@@ -645,8 +837,18 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
             validation_stats['validated'] += 1
             crossref_year = crossref_data[doi_lower]['year']
             
+            paper['_validation'] = {
+                'source': 'crossref',
+                'year': crossref_year,
+                'original_year': paper.get('publication_year'),
+                'kept': crossref_year in target_years,
+                'crossref_doi': crossref_data[doi_lower]['doi']  # Store original case
+            }
+            
+            # Update publication year with Crossref year
+            paper['publication_year'] = crossref_year
+            
             if crossref_year in target_years:
-                paper['publication_year'] = crossref_year
                 filtered_papers.append(paper)
                 validation_stats['kept'] += 1
             else:
@@ -655,6 +857,11 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
                     validation_stats['year_mismatch'] += 1
         else:
             validation_stats['not_found'] += 1
+            paper['_validation'] = {
+                'source': 'openalex_only',
+                'year': paper.get('publication_year'),
+                'kept': paper.get('publication_year') in target_years
+            }
             if paper.get('publication_year') in target_years:
                 filtered_papers.append(paper)
                 validation_stats['kept'] += 1
@@ -670,9 +877,12 @@ def enrich_paper_data(paper: Dict) -> Dict:
         'doi': paper.get('doi', '').replace('https://doi.org/', ''),
         'title': paper.get('title', 'No title'),
         'publication_year': paper.get('publication_year'),
+        'publication_date': paper.get('publication_date', ''),
         'cited_by_count': paper.get('cited_by_count', 0),
+        'referenced_works_count': paper.get('referenced_works_count', len(paper.get('referenced_works', []))),
         'type': paper.get('type', ''),
-        'is_oa': paper.get('open_access', {}).get('is_oa', False)
+        'is_oa': paper.get('open_access', {}).get('is_oa', False),
+        'validation': paper.get('_validation', {})
     }
     
     # Authors
@@ -687,6 +897,7 @@ def enrich_paper_data(paper: Dict) -> Dict:
             if author_name:
                 authors.append(author_name)
                 
+                # Get affiliations for collaboration analysis
                 institutions = authorship.get('institutions', [])
                 for inst in institutions:
                     if inst.get('country_code'):
@@ -696,6 +907,8 @@ def enrich_paper_data(paper: Dict) -> Dict:
     
     enriched['authors'] = authors
     enriched['author_count'] = len(authors)
+    enriched['author_countries'] = list(author_countries)
+    enriched['affiliations'] = list(set(author_affiliations))
     
     # Journal and publisher
     primary_location = paper.get('primary_location', {})
@@ -727,6 +940,28 @@ def calculate_citations_per_year(citations: int, pub_year: int, current_year: in
     
     years_since = max(1, current_year - pub_year)
     return citations / years_since
+
+def add_to_recent_institutions(inst: Dict):
+    """Add institution to recent list"""
+    recent = st.session_state['recent_institutions']
+    
+    # Check if already exists
+    for i, existing in enumerate(recent):
+        if existing['id'] == inst['id']:
+            # Move to front
+            recent.pop(i)
+            recent.insert(0, inst)
+            break
+    else:
+        # Add new
+        recent.insert(0, inst)
+    
+    # Keep only last 5
+    st.session_state['recent_institutions'] = recent[:5]
+
+# ============================================================================
+# ANALYSIS FUNCTIONS
+# ============================================================================
 
 def analyze_papers(papers: List[Dict]) -> Dict:
     """Perform comprehensive analysis on papers"""
@@ -810,7 +1045,7 @@ def analyze_papers(papers: List[Dict]) -> Dict:
     }
 
 # ============================================================================
-# PLOTTING FUNCTIONS
+# PLOTTING FUNCTIONS (PLOTLY)
 # ============================================================================
 
 def plot_yearly_publications(yearly_data: Dict[int, int], colors: Dict):
@@ -823,6 +1058,8 @@ def plot_yearly_publications(yearly_data: Dict[int, int], colors: Dict):
         x=years,
         y=counts,
         marker_color=colors['primary'],
+        marker_line_color=colors['gradient_end'],
+        marker_line_width=1,
         name='Publications'
     ))
     
@@ -848,11 +1085,13 @@ def plot_yearly_citations(yearly_citations: Dict[int, int], colors: Dict):
         x=years,
         y=citations,
         marker_color=colors['secondary'],
+        marker_line_color=colors['gradient_start'],
+        marker_line_width=1,
         name='Citations'
     ))
     
     fig.update_layout(
-        title='Citations by Year',
+        title='Citations by Year (Total)',
         xaxis_title='Year',
         yaxis_title='Total Citations',
         template='plotly_white',
@@ -873,12 +1112,14 @@ def plot_top_authors(authors_data: List[Tuple[str, int]], colors: Dict):
         y=authors[::-1],
         x=counts[::-1],
         orientation='h',
-        marker_color=colors['primary']
+        marker_color=colors['primary'],
+        marker_line_color=colors['gradient_end'],
+        marker_line_width=1
     ))
     
     fig.update_layout(
-        title='Top Authors',
-        xaxis_title='Publications',
+        title='Top Authors by Publication Count',
+        xaxis_title='Number of Publications',
         yaxis_title='Author',
         template='plotly_white',
         height=500,
@@ -897,12 +1138,14 @@ def plot_top_journals(journals_data: List[Tuple[str, int]], colors: Dict):
         y=journals[::-1],
         x=counts[::-1],
         orientation='h',
-        marker_color=colors['secondary']
+        marker_color=colors['secondary'],
+        marker_line_color=colors['gradient_start'],
+        marker_line_width=1
     ))
     
     fig.update_layout(
-        title='Top Journals',
-        xaxis_title='Publications',
+        title='Top Journals by Publication Count',
+        xaxis_title='Number of Publications',
         yaxis_title='Journal',
         template='plotly_white',
         height=500,
@@ -913,21 +1156,21 @@ def plot_top_journals(journals_data: List[Tuple[str, int]], colors: Dict):
 
 def plot_top_publishers(publishers_data: List[Tuple[str, int]], colors: Dict):
     """Plot top publishers"""
-    publishers = [p[0][:30] + '...' if len(p[0]) > 30 else p[0] for p in publishers_data[:8]]
-    counts = [p[1] for p in publishers_data[:8]]
+    publishers = [p[0][:30] + '...' if len(p[0]) > 30 else p[0] for p in publishers_data[:15]]
+    counts = [p[1] for p in publishers_data[:15]]
     
     fig = go.Figure()
     fig.add_trace(go.Pie(
         labels=publishers,
         values=counts,
         marker_colors=[colors['primary'], colors['secondary'], colors['gradient_start'], 
-                       colors['gradient_end'], colors['accent1'], colors['accent2']],
+                       colors['gradient_end'], colors['accent1'], colors['accent2']] * 3,
         textinfo='percent+label',
         insidetextorientation='radial'
     ))
     
     fig.update_layout(
-        title='Top Publishers',
+        title='Top Publishers Distribution',
         template='plotly_white',
         height=500
     )
@@ -943,7 +1186,9 @@ def plot_citation_distribution(distribution: Dict[str, int], colors: Dict):
     fig.add_trace(go.Bar(
         x=categories,
         y=counts,
-        marker_color=colors['primary']
+        marker_color=colors['primary'],
+        marker_line_color=colors['gradient_end'],
+        marker_line_width=1
     ))
     
     fig.update_layout(
@@ -961,11 +1206,17 @@ def plot_collaboration_types(collab_data: Dict[str, int], colors: Dict):
     labels = list(collab_data.keys())
     values = list(collab_data.values())
     
+    colors_map = {
+        'Intra-institutional': colors['primary'],
+        'Inter-institutional (domestic)': colors['secondary'],
+        'International': colors['gradient_start']
+    }
+    
     fig = go.Figure()
     fig.add_trace(go.Pie(
         labels=labels,
         values=values,
-        marker_colors=[colors['primary'], colors['secondary'], colors['gradient_start']],
+        marker_colors=[colors_map.get(l, colors['accent1']) for l in labels],
         textinfo='percent+label',
         insidetextorientation='radial'
     ))
@@ -1016,9 +1267,9 @@ def plot_yearly_collaboration(yearly_collab: Dict, colors: Dict):
     ))
     
     fig.update_layout(
-        title='Collaboration by Year',
+        title='Collaboration Types by Year',
         xaxis_title='Year',
-        yaxis_title='Publications',
+        yaxis_title='Number of Publications',
         barmode='stack',
         template='plotly_white',
         hovermode='x'
@@ -1028,9 +1279,9 @@ def plot_yearly_collaboration(yearly_collab: Dict, colors: Dict):
     return fig
 
 def plot_citations_vs_references(papers: List[Dict], colors: Dict):
-    """Plot citations vs references scatter"""
+    """Plot citations vs references scatter with real reference counts"""
     citations = [p['cited_by_count'] for p in papers]
-    references = [random.randint(0, 100) for _ in papers]  # Placeholder
+    references = [p.get('referenced_works_count', 0) for p in papers]
     years = [p['publication_year'] for p in papers]
     
     fig = go.Figure()
@@ -1044,28 +1295,48 @@ def plot_citations_vs_references(papers: List[Dict], colors: Dict):
             color=years,
             colorscale='Viridis',
             showscale=True,
-            colorbar=dict(title='Year')
+            colorbar=dict(title='Year'),
+            line=dict(width=1, color='white')
         ),
         text=[p['title'][:50] + '...' for p in papers],
-        hovertemplate='<b>%{text}</b><br>Citations: %{y}<br>Year: %{marker.color}<extra></extra>'
+        hovertemplate='<b>%{text}</b><br>Citations: %{y}<br>References: %{x}<br>Year: %{marker.color}<extra></extra>'
     ))
     
     fig.update_layout(
-        title='Citations vs Year',
-        xaxis_title='References',
-        yaxis_title='Citations',
+        title='Citations vs References (with Year Color Map)',
+        xaxis_title='Number of References',
+        yaxis_title='Number of Citations',
         template='plotly_white',
         height=500
     )
     
     return fig
 
+def plot_top_cited_table(papers: List[Dict], title: str, colors: Dict):
+    """Create a table for top cited papers"""
+    if not papers:
+        return None
+    
+    df = pd.DataFrame([
+        {
+            'Title': p['title'][:80] + '...' if len(p['title']) > 80 else p['title'],
+            'Citations': p['cited_by_count'],
+            'Year': p['publication_year'],
+            'Authors': ', '.join(p['authors'][:3]) + (' et al.' if len(p['authors']) > 3 else ''),
+            'Journal': p['journal'][:30] + '...' if len(p['journal']) > 30 else p['journal']
+        }
+        for p in papers[:20]
+    ])
+    
+    return df
+
 def create_validation_summary(validation_stats: Dict, colors: Dict):
     """Create validation summary visualization"""
     if not validation_stats:
         return None
     
-    labels = ['Validated & Kept', 'Kept (No DOI/Not Found)', 'Rejected']
+    # Create pie chart for validation results
+    labels = ['Validated & Kept', 'Kept (No DOI/Not Found)', 'Rejected (Year Mismatch)']
     values = [
         validation_stats.get('validated', 0),
         validation_stats.get('no_doi', 0) + validation_stats.get('not_found', 0),
@@ -1082,7 +1353,7 @@ def create_validation_summary(validation_stats: Dict, colors: Dict):
     ))
     
     fig.update_layout(
-        title='DOI Validation',
+        title='DOI Validation Summary',
         template='plotly_white',
         height=400
     )
@@ -1094,26 +1365,84 @@ def create_validation_summary(validation_stats: Dict, colors: Dict):
 # ============================================================================
 
 def main():
-    # Sidebar
+    # Sidebar for settings
     with st.sidebar:
-        st.markdown(f"<h2 style='color: {colors['primary']};'>🎨 Theme</h2>", unsafe_allow_html=True)
+        st.markdown(f"<h2 style='color: {colors['primary']};'>🎨 Settings</h2>", unsafe_allow_html=True)
         
+        # Theme selector
+        st.markdown("**Color Theme:**")
+        
+        # Display color palette options in a grid
         cols = st.columns(4)
-        for i, palette in enumerate(UI_COLOR_PALETTES[:8]):
+        for i, palette in enumerate(UI_COLOR_PALETTES[:8]):  # Show first 8
             with cols[i % 4]:
-                if st.button("●", key=f"theme_{i}", help=palette['name']):
+                if st.button(
+                    "●", 
+                    key=f"palette_{i}",
+                    help=palette['name'],
+                    use_container_width=True
+                ):
                     st.session_state['ui_palette'] = palette
                     st.rerun()
+                
+                # Show color indicator
+                st.markdown(
+                    f'<div style="width:100%; height:5px; background: linear-gradient(90deg, {palette["gradient_start"]}, {palette["gradient_end"]}); border-radius:3px; margin-bottom:5px;"></div>',
+                    unsafe_allow_html=True
+                )
         
         st.markdown("---")
-        st.markdown("**About UnInst Analytics**")
-        st.markdown("University & Institution analytics using OpenAlex")
+        
+        # Recent institutions
+        if st.session_state['recent_institutions']:
+            st.markdown("**Recent Institutions:**")
+            for inst in st.session_state['recent_institutions']:
+                if st.button(
+                    f"🏛️ {inst['name'][:30]}...",
+                    key=f"recent_{inst['id']}",
+                    help=f"ROR: {inst['ror']}",
+                    use_container_width=True
+                ):
+                    st.session_state['institution_id'] = inst['id']
+                    st.session_state['institution_name'] = inst['name']
+                    st.session_state['institution_ror'] = inst['ror']
+                    st.session_state['institution_country'] = inst['country']
+                    st.session_state['step'] = 2
+                    st.rerun()
+            st.markdown("---")
+        
+        # API Status
+        st.markdown(f"**API Status:**")
+        st.markdown(f"✅ OpenAlex")
+        st.markdown(f"✅ Crossref")
+        st.markdown("---")
+        
+        # About
+        st.markdown("**About:**")
+        st.markdown("""
+        University & Institute publication analysis using OpenAlex with date validation via Crossref.
+        
+        **Data Sources:**
+        - OpenAlex: Primary search
+        - Crossref: Date validation
+        """)
+        
+        # Rate limits info
+        with st.expander("ℹ️ Rate Limits & Limits"):
+            st.markdown("""
+            - OpenAlex: 10 requests/sec
+            - Crossref: 50 requests/sec (no key)
+            - Max papers analyzed: 10,000
+            - Max period: 30 years
+            
+            Analysis may take time for large datasets.
+            """)
     
     # Main content
     st.markdown(f'<h1 class="main-header">🏛️ UnInst Analytics</h1>', unsafe_allow_html=True)
     
-    # Step indicator
-    steps = ["Institution", "Period", "Collection", "Results"]
+    # Step indicator - ALWAYS SHOWN
+    steps = ["Institution Search", "Period Selection", "Data Collection", "Results"]
     current_step = st.session_state['step'] - 1
     
     step_html = '<div class="step-container">'
@@ -1125,59 +1454,140 @@ def main():
         else:
             status = ""
         
-        step_html += f'<div class="step {status}"><div class="step-number">{i+1}</div><div>{step_name}</div></div>'
+        step_html += f'''
+        <div class="step {status}">
+            <div class="step-number">{i+1}</div>
+            <div>{step_name}</div>
+        </div>
+        '''
     step_html += '</div>'
     
     st.markdown(step_html, unsafe_allow_html=True)
     
     # ========================================================================
-    # STEP 1
+    # STEP 1: INSTITUTION SEARCH
     # ========================================================================
     
     if st.session_state['step'] == 1:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("### 🔍 Step 1: Institution Search")
         
-        query = st.text_input("Institution name or ROR ID", placeholder="e.g., Institute of High-Temperature Electrochemistry or 0521rv456")
+        st.markdown("""
+        Enter institution name or ROR ID.
         
-        if st.button("🔍 Search", type="primary"):
-            with st.spinner("Searching..."):
+        **Examples:**
+        - Name: `Institute of High-Temperature Electrochemistry`
+        - ROR ID: `0521rv456`
+        """)
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            query = st.text_input(
+                "Institution or ROR ID",
+                placeholder="Enter name or ROR ID...",
+                key="inst_query"
+            )
+        
+        with col2:
+            search_clicked = st.button("🔍 Search", type="primary", use_container_width=True)
+        
+        if search_clicked and query:
+            with st.spinner("Searching for institution..."):
                 if is_ror_id(query):
+                    # Search by ROR
                     inst = get_institution_by_ror(query)
                     if inst:
                         st.session_state['institution_id'] = inst['id']
                         st.session_state['institution_name'] = inst['display_name']
                         st.session_state['institution_ror'] = inst['ror']
                         st.session_state['institution_country'] = inst.get('country', 'N/A')
+                        
+                        # Add to recent
+                        add_to_recent_institutions({
+                            'id': inst['id'],
+                            'name': inst['display_name'],
+                            'ror': inst['ror'],
+                            'country': inst.get('country', 'N/A')
+                        })
+                        
+                        st.markdown(f"""
+                        <div class="success-box">
+                            <strong>✅ Institution Found:</strong><br>
+                            {inst['display_name']}<br>
+                            ROR: {inst['ror']}<br>
+                            Country: {inst.get('country', 'N/A')}<br>
+                            Total works in OpenAlex: {inst['works_count']:,}
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Store in session for next step
                         st.session_state['search_results'] = [inst]
-                        st.rerun()
+                    else:
+                        st.markdown(f"""
+                        <div class="error-box">
+                            ❌ Institution with ROR ID {query} not found
+                        </div>
+                        """, unsafe_allow_html=True)
                 else:
+                    # Search by name
                     results = search_institution(query)
                     st.session_state['search_results'] = results
-                    st.rerun()
+                    
+                    if results:
+                        st.markdown("**Found institutions:**")
+                        
+                        for i, inst in enumerate(results):
+                            col1, col2, col3 = st.columns([3, 1, 1])
+                            with col1:
+                                st.markdown(f"**{inst['display_name']}**")
+                                st.markdown(f"ROR: {inst['ror']} | Country: {inst.get('country', 'N/A')} | Works: {inst['works_count']:,}")
+                            with col2:
+                                if st.button("Select", key=f"select_{i}"):
+                                    st.session_state['institution_id'] = inst['id']
+                                    st.session_state['institution_name'] = inst['display_name']
+                                    st.session_state['institution_ror'] = inst['ror']
+                                    st.session_state['institution_country'] = inst.get('country', 'N/A')
+                                    
+                                    # Add to recent
+                                    add_to_recent_institutions({
+                                        'id': inst['id'],
+                                        'name': inst['display_name'],
+                                        'ror': inst['ror'],
+                                        'country': inst.get('country', 'N/A')
+                                    })
+                                    
+                                    st.session_state['step'] = 2
+                                    st.rerun()
+                            with col3:
+                                st.button("Details", key=f"details_{i}", disabled=True)
+                            st.markdown("---")
+                    else:
+                        st.markdown(f"""
+                        <div class="warning-box">
+                            ⚠️ No institutions found. Try:
+                            - Using a more general name
+                            - Checking spelling
+                            - Using ROR ID
+                        </div>
+                        """, unsafe_allow_html=True)
         
-        # Show results
-        if st.session_state['search_results']:
-            st.markdown("### Results")
-            for i, inst in enumerate(st.session_state['search_results']):
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    st.markdown(f"**{inst['display_name']}**")
-                    st.markdown(f"ROR: {inst['ror']} | Country: {inst.get('country', 'N/A')} | Works: {inst['works_count']:,}")
-                with col2:
-                    if st.button("Select", key=f"sel_{i}"):
-                        st.session_state['institution_id'] = inst['id']
-                        st.session_state['institution_name'] = inst['display_name']
-                        st.session_state['institution_ror'] = inst['ror']
-                        st.session_state['institution_country'] = inst.get('country', 'N/A')
-                        st.session_state['step'] = 2
-                        st.rerun()
-                st.markdown("---")
+        # Navigation buttons
+        if st.session_state['institution_id']:
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("← Back", use_container_width=True):
+                    st.session_state['step'] = 1
+                    st.rerun()
+            with col2:
+                if st.button("Next →", type="primary", use_container_width=True):
+                    st.session_state['step'] = 2
+                    st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
     
     # ========================================================================
-    # STEP 2
+    # STEP 2: YEAR SELECTION
     # ========================================================================
     
     elif st.session_state['step'] == 2:
@@ -1187,13 +1597,32 @@ def main():
         st.markdown(f"""
         <div class="info-box">
             <strong>Institution:</strong> {st.session_state['institution_name']}<br>
-            <strong>ROR:</strong> {st.session_state['institution_ror']}
+            <strong>ROR:</strong> {st.session_state['institution_ror']}<br>
+            <strong>Country:</strong> {st.session_state['institution_country']}
         </div>
         """, unsafe_allow_html=True)
         
+        st.markdown("""
+        **Select analysis period:**
+        
+        **Input formats:**
+        - Single year: `2023`
+        - Range: `2020-2024`
+        - Multiple periods: `2020-2022,2024,2023-2025`
+        
+        *Note: Period limited to 30 years for performance*
+        """)
+        
+        # Use on_change to update session state
+        def on_year_input_change():
+            st.session_state['year_input_text'] = st.session_state['year_input_widget']
+        
         year_input = st.text_input(
-            "Period (e.g., 2023, 2020-2024, or 2020-2022,2024)",
-            value=st.session_state['year_input_text']
+            "Analysis Period",
+            value=st.session_state['year_input_text'],
+            placeholder="e.g., 2020-2024 or 2023,2025-2026",
+            key="year_input_widget",
+            on_change=on_year_input_change
         )
         
         col1, col2 = st.columns(2)
@@ -1204,59 +1633,93 @@ def main():
                 st.rerun()
         
         with col2:
-            if st.button("Check", type="primary", use_container_width=True):
+            if st.button("Check Availability →", type="primary", use_container_width=True):
                 if year_input:
                     years = parse_year_input(year_input)
                     if years:
-                        st.session_state['year_input_text'] = year_input
-                        
-                        with st.spinner("Checking..."):
-                            total = get_total_papers_count(st.session_state['institution_id'], years)
-                            st.session_state['years_range'] = years
-                            st.session_state['total_papers'] = total
+                        # Validate years
+                        is_valid, message = validate_year_range(years)
+                        if not is_valid:
+                            st.markdown(f"""
+                            <div class="error-box">
+                                ❌ {message}
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.session_state['year_input_text'] = year_input
                             
-                            if total > 0:
-                                expanded = expand_year_range(years)
-                                st.markdown(f"""
-                                <div class="success-box">
-                                    <strong>✅ Data found</strong><br>
-                                    Papers: {total:,}<br>
-                                    Search period: {min(expanded)}-{max(expanded)}
-                                </div>
-                                """, unsafe_allow_html=True)
-                                st.session_state['show_start_analysis'] = True
-                            else:
-                                st.markdown("""
-                                <div class="warning-box">
-                                    ⚠️ No papers found
-                                </div>
-                                """, unsafe_allow_html=True)
-        
-        if st.session_state.get('show_start_analysis', False):
-            if st.button("Start Analysis →", type="primary", use_container_width=True):
-                st.session_state['step'] = 3
-                st.session_state['show_start_analysis'] = False
-                st.rerun()
+                            with st.spinner("Checking data availability..."):
+                                # Get total count with expanded range
+                                total = get_total_papers_count(st.session_state['institution_id'], years)
+                                
+                                st.session_state['years_range'] = years
+                                st.session_state['total_papers'] = total
+                                
+                                if total > 0:
+                                    expanded = expand_year_range(years)
+                                    
+                                    # Show warning for large datasets
+                                    if total > WARN_PAPERS_THRESHOLD:
+                                        st.markdown(f"""
+                                        <div class="warning-box">
+                                            <strong>⚠️ Large Dataset Warning</strong><br>
+                                            Found {total:,} papers. Analysis will be limited to {MAX_PAPERS_TO_ANALYZE:,} papers for performance.
+                                            This may take several minutes.
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                                    else:
+                                        st.markdown(f"""
+                                        <div class="success-box">
+                                            <strong>✅ Data found</strong><br>
+                                            Total papers (with expanded filter): {total:,}<br>
+                                            OpenAlex search period: {min(expanded)}-{max(expanded)}
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                                    
+                                    # Add a button to proceed
+                                    if st.button("Start Analysis →", type="primary"):
+                                        st.session_state['step'] = 3
+                                        st.rerun()
+                                else:
+                                    st.markdown(f"""
+                                    <div class="warning-box">
+                                        ⚠️ No papers found for this period<br>
+                                        Try expanding the time range
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                    else:
+                        st.markdown("""
+                        <div class="error-box">
+                            ❌ Invalid period format
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                    <div class="error-box">
+                        ❌ Please enter analysis period
+                    </div>
+                    """, unsafe_allow_html=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
     
     # ========================================================================
-    # STEP 3
+    # STEP 3: DATA COLLECTION
     # ========================================================================
     
     elif st.session_state['step'] == 3:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("### 📥 Step 3: Data Collection")
+        st.markdown("### 📥 Step 3: Data Collection & Validation")
         
         st.markdown(f"""
         <div class="info-box">
-            <strong>Parameters:</strong><br>
+            <strong>Analysis Parameters:</strong><br>
             Institution: {st.session_state['institution_name']}<br>
-            Period: {min(st.session_state['years_range'])}-{max(st.session_state['years_range'])}<br>
-            Estimated papers: {st.session_state['total_papers']:,}
+            Requested period: {min(st.session_state['years_range'])}-{max(st.session_state['years_range'])}<br>
+            Total papers (OpenAlex with expansion): {st.session_state['total_papers']:,}
         </div>
         """, unsafe_allow_html=True)
         
+        # Progress tracking
         progress_bar = st.progress(0)
         status_text = st.empty()
         
@@ -1268,18 +1731,27 @@ def main():
                 st.rerun()
         
         with col2:
-            if st.button("Start", type="primary", use_container_width=True):
+            if st.button("Start Data Collection", type="primary", use_container_width=True):
                 all_papers = []
                 cursor = "*"
                 page = 0
+                total_pages_to_fetch = min(
+                    (st.session_state['total_papers'] // 200) + 1,
+                    MAX_PAGES
+                )
                 
-                status_text.text("Loading from OpenAlex...")
+                # Step 1: Fetch from OpenAlex with limits
+                status_text.text("Loading data from OpenAlex...")
                 
-                while cursor:
+                papers_to_fetch = min(st.session_state['total_papers'], MAX_PAPERS_TO_ANALYZE)
+                status_text.text(f"Loading up to {papers_to_fetch:,} papers...")
+                
+                while cursor and len(all_papers) < MAX_PAPERS_TO_ANALYZE and page < MAX_PAGES:
                     page += 1
-                    progress_bar.progress(min(page * 0.1, 0.3))
+                    progress = min(0.1 + (page / total_pages_to_fetch) * 0.3, 0.4)
+                    progress_bar.progress(progress)
                     
-                    papers, next_cursor = fetch_papers_batch(
+                    papers, next_cursor, batch_count = fetch_papers_batch(
                         st.session_state['institution_id'],
                         st.session_state['years_range'],
                         cursor
@@ -1287,39 +1759,39 @@ def main():
                     
                     all_papers.extend(papers)
                     cursor = next_cursor
-                    status_text.text(f"Loaded {len(all_papers)} papers...")
-                    time.sleep(0.1)
+                    
+                    status_text.text(f"Loaded {len(all_papers)} papers (page {page}/{total_pages_to_fetch})...")
+                    time.sleep(0.1)  # Rate limiting
                 
-                status_text.text(f"✅ Loaded {len(all_papers)} papers")
-                progress_bar.progress(0.3)
-                
-                # Extract DOIs
-                dois = extract_dois_from_papers(all_papers)
-                status_text.text(f"Found {len(dois)} DOIs")
+                status_text.text(f"✅ Loaded {len(all_papers)} papers from OpenAlex")
                 progress_bar.progress(0.4)
                 
-                # Validate with Crossref
-                status_text.text("Validating with Crossref...")
+                # Step 2: Extract DOIs
+                dois = extract_dois_from_papers(all_papers)
+                status_text.text(f"Found {len(dois)} DOIs for validation")
+                progress_bar.progress(0.45)
                 
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                crossref_data = loop.run_until_complete(validate_dois_with_crossref(dois))
-                loop.close()
+                # Step 3: Validate with Crossref (synchronous)
+                status_text.text("Validating dates with Crossref...")
+                
+                crossref_data = make_crossref_request_batch(dois)
                 
                 status_text.text(f"✅ Validated {len(crossref_data)} DOIs")
-                progress_bar.progress(0.8)
+                progress_bar.progress(0.7)
                 
-                # Filter
-                status_text.text("Filtering papers...")
+                # Step 4: Filter by actual years
+                status_text.text("Filtering by actual publication years...")
                 
                 filtered_papers, validation_stats = filter_papers_by_actual_years(
-                    all_papers, crossref_data, st.session_state['years_range']
+                    all_papers,
+                    crossref_data,
+                    st.session_state['years_range']
                 )
                 
-                progress_bar.progress(0.9)
+                progress_bar.progress(0.8)
                 
-                # Analyze
-                status_text.text("Analyzing...")
+                # Step 5: Analyze
+                status_text.text("Analyzing data...")
                 
                 analysis_results = analyze_papers(filtered_papers)
                 
@@ -1328,141 +1800,329 @@ def main():
                 st.session_state['analysis_complete'] = True
                 
                 progress_bar.progress(1.0)
-                status_text.text("✅ Complete!")
+                status_text.text("✅ Analysis complete!")
                 
                 time.sleep(0.5)
+                
                 st.session_state['step'] = 4
                 st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
     
     # ========================================================================
-    # STEP 4
+    # STEP 4: RESULTS
     # ========================================================================
     
     elif st.session_state['step'] == 4 and st.session_state['analysis_complete']:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("### 📊 Step 4: Results")
+        st.markdown("### 📊 Step 4: Analysis Results")
         
-        # New search button
-        if st.button("← New Search", use_container_width=True):
-            for key in list(st.session_state.keys()):
-                if key not in ['ui_palette']:
-                    del st.session_state[key]
-            st.session_state['step'] = 1
-            st.rerun()
+        # Navigation buttons
+        col1, col2, col3 = st.columns([1, 1, 2])
         
-        # Metrics
+        with col1:
+            if st.button("← New Search", use_container_width=True):
+                # Clear session but keep theme and recent
+                palette = st.session_state['ui_palette']
+                recent = st.session_state['recent_institutions']
+                for key in list(st.session_state.keys()):
+                    if key not in ['ui_palette', 'previous_palette', 'recent_institutions']:
+                        del st.session_state[key]
+                st.session_state['ui_palette'] = palette
+                st.session_state['recent_institutions'] = recent
+                st.session_state['step'] = 1
+                st.rerun()
+        
+        with col2:
+            if st.button("🔄 Refresh", use_container_width=True):
+                st.rerun()
+        
+        # Summary metrics
         data = st.session_state['papers_data']
         validation = st.session_state['validation_stats']
         
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.markdown(f'<div class="metric-card"><div class="value">{data["total_papers"]:,}</div><div class="label">Papers</div></div>', unsafe_allow_html=True)
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="value">{data['total_papers']:,}</div>
+                <div class="label">Total Papers</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
         with col2:
-            st.markdown(f'<div class="metric-card"><div class="value">{data["total_citations"]:,}</div><div class="label">Citations</div></div>', unsafe_allow_html=True)
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="value">{data['total_citations']:,}</div>
+                <div class="label">Total Citations</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
         with col3:
-            avg = data["total_citations"]/data["total_papers"] if data["total_papers"] > 0 else 0
-            st.markdown(f'<div class="metric-card"><div class="value">{avg:.1f}</div><div class="label">Avg</div></div>', unsafe_allow_html=True)
+            avg_citations = data['total_citations'] / data['total_papers'] if data['total_papers'] > 0 else 0
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="value">{avg_citations:.1f}</div>
+                <div class="label">Avg. Citations</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
         with col4:
-            st.markdown(f'<div class="metric-card"><div class="value">{validation["validated"]:,}</div><div class="label">Validated</div></div>', unsafe_allow_html=True)
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="value">{validation['validated']:,}</div>
+                <div class="label">Validated DOIs</div>
+            </div>
+            """, unsafe_allow_html=True)
         
         # Validation summary
+        st.markdown('<div class="info-box">', unsafe_allow_html=True)
         st.markdown(f"""
-        <div class="info-box">
-            <strong>Validation:</strong> {validation['validated']}/{validation['with_doi']} DOIs validated | {validation['kept']}/{validation['total']} papers kept
-        </div>
-        """, unsafe_allow_html=True)
+        **📊 Date Validation Statistics (Crossref):**
+        - Total papers: {validation['total']:,}
+        - Papers with DOI: {validation['with_doi']:,} ({validation['with_doi']/validation['total']*100:.1f}%)
+        - Successfully validated: {validation['validated']:,} ({validation['validated']/validation['with_doi']*100:.1f}% of papers with DOI)
+        - Rejected (year mismatch): {validation['rejected']:,} ({validation['rejected']/validation['total']*100:.1f}%)
+        - Kept for analysis: {data['total_papers']:,}
+        """)
+        st.markdown('</div>', unsafe_allow_html=True)
         
-        # Tabs
+        # Validation visualization
+        if validation:
+            fig_val = create_validation_summary(validation, colors)
+            if fig_val:
+                st.plotly_chart(fig_val, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # Tabs for different analyses
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-            "Years", "Authors", "Journals", "Publishers", "Citations", "Collaborations"
+            "📈 Years", "👥 Authors", "📚 Journals", "🏢 Publishers", "📊 Citations", "🌍 Collaborations"
         ])
         
         with tab1:
+            st.markdown("### Publications by Year")
+            
             col1, col2 = st.columns(2)
+            
             with col1:
-                st.plotly_chart(plot_yearly_publications(data['yearly_papers'], colors), use_container_width=True)
+                fig_yearly = plot_yearly_publications(data['yearly_papers'], colors)
+                st.plotly_chart(fig_yearly, use_container_width=True)
+            
             with col2:
-                st.plotly_chart(plot_yearly_citations(data['yearly_citations'], colors), use_container_width=True)
-            st.plotly_chart(plot_citations_vs_references(data['enriched_papers'], colors), use_container_width=True)
+                fig_cit_year = plot_yearly_citations(data['yearly_citations'], colors)
+                st.plotly_chart(fig_cit_year, use_container_width=True)
+            
+            # Citations vs References
+            fig_scatter = plot_citations_vs_references(data['enriched_papers'], colors)
+            st.plotly_chart(fig_scatter, use_container_width=True)
         
         with tab2:
+            st.markdown("### Top 20 Authors")
+            
             if data['top_authors']:
-                st.plotly_chart(plot_top_authors(data['top_authors'], colors), use_container_width=True)
-                df = pd.DataFrame(data['top_authors'], columns=['Author', 'Publications'])
-                st.dataframe(df, use_container_width=True)
+                fig_authors = plot_top_authors(data['top_authors'], colors)
+                st.plotly_chart(fig_authors, use_container_width=True)
+                
+                # Table
+                df_authors = pd.DataFrame(data['top_authors'], columns=['Author', 'Publications'])
+                st.dataframe(df_authors, use_container_width=True)
+            else:
+                st.info("No author data available")
         
         with tab3:
-            if data['top_journals']:
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.plotly_chart(plot_top_journals(data['top_journals'], colors), use_container_width=True)
-                with col2:
-                    df = pd.DataFrame(data['top_journals'], columns=['Journal', 'Publications'])
-                    st.dataframe(df, use_container_width=True)
+            st.markdown("### Top 20 Journals")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if data['top_journals']:
+                    fig_journals = plot_top_journals(data['top_journals'], colors)
+                    st.plotly_chart(fig_journals, use_container_width=True)
+            
+            with col2:
+                if data['top_journals']:
+                    df_journals = pd.DataFrame(data['top_journals'], columns=['Journal', 'Publications'])
+                    st.dataframe(df_journals, use_container_width=True)
         
         with tab4:
-            if data['top_publishers']:
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.plotly_chart(plot_top_publishers(data['top_publishers'], colors), use_container_width=True)
-                with col2:
-                    df = pd.DataFrame(data['top_publishers'], columns=['Publisher', 'Publications'])
-                    st.dataframe(df, use_container_width=True)
+            st.markdown("### Top 20 Publishers")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if data['top_publishers']:
+                    fig_publishers = plot_top_publishers(data['top_publishers'], colors)
+                    st.plotly_chart(fig_publishers, use_container_width=True)
+            
+            with col2:
+                if data['top_publishers']:
+                    df_publishers = pd.DataFrame(data['top_publishers'], columns=['Publisher', 'Publications'])
+                    st.dataframe(df_publishers, use_container_width=True)
         
         with tab5:
-            st.plotly_chart(plot_citation_distribution(data['citation_distribution'], colors), use_container_width=True)
+            st.markdown("### Citation Analysis")
             
-            st.markdown("### Top 20 Most Cited")
-            df_cited = pd.DataFrame([
-                {'Title': p['title'][:80] + '...', 'Citations': p['cited_by_count'], 'Year': p['publication_year']}
-                for p in data['top_cited'][:10]
-            ])
-            st.dataframe(df_cited, use_container_width=True)
+            # Citation distribution
+            fig_cit_dist = plot_citation_distribution(data['citation_distribution'], colors)
+            st.plotly_chart(fig_cit_dist, use_container_width=True)
             
-            st.markdown("### Top 20 by Annual Rate")
-            df_rate = pd.DataFrame([
-                {'Title': p['title'][:80] + '...', 'Rate': f"{p['citations_per_year']:.1f}", 'Year': p['publication_year']}
-                for p in data['top_citations_per_year'][:10]
-            ])
-            st.dataframe(df_rate, use_container_width=True)
+            st.markdown("### Top 20 Most Cited Papers")
+            df_top_cited = plot_top_cited_table(data['top_cited'], "Top by Citations", colors)
+            if df_top_cited is not None:
+                st.dataframe(df_top_cited, use_container_width=True)
+            
+            st.markdown("### Top 20 Papers by Annual Citation Rate")
+            df_top_cpy = plot_top_cited_table(data['top_citations_per_year'], "Top by Annual Citations", colors)
+            if df_top_cpy is not None:
+                st.dataframe(df_top_cpy, use_container_width=True)
         
         with tab6:
+            st.markdown("### Collaboration Analysis")
+            
             col1, col2 = st.columns(2)
+            
             with col1:
-                st.plotly_chart(plot_collaboration_types(data['collaboration_types'], colors), use_container_width=True)
+                fig_collab = plot_collaboration_types(data['collaboration_types'], colors)
+                st.plotly_chart(fig_collab, use_container_width=True)
+            
             with col2:
-                df = pd.DataFrame(list(data['collaboration_types'].items()), columns=['Type', 'Count'])
-                st.dataframe(df, use_container_width=True)
-            st.plotly_chart(plot_yearly_collaboration(data['yearly_collaboration'], colors), use_container_width=True)
+                df_collab = pd.DataFrame(
+                    list(data['collaboration_types'].items()),
+                    columns=['Collaboration Type', 'Count']
+                )
+                st.dataframe(df_collab, use_container_width=True)
+            
+            # Yearly collaboration
+            fig_yearly_collab = plot_yearly_collaboration(data['yearly_collaboration'], colors)
+            st.plotly_chart(fig_yearly_collab, use_container_width=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Export
+        # Export section
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("### 📥 Export")
+        st.markdown("### 📥 Export Data")
         
+        col1, col2, col3 = st.columns(3)
+        
+        # Prepare export data
         export_df = pd.DataFrame([
             {
                 'Title': p['title'],
                 'Authors': ', '.join(p['authors']),
                 'Year': p['publication_year'],
                 'Journal': p['journal'],
+                'Publisher': p['publisher'],
                 'Citations': p['cited_by_count'],
-                'DOI': p['doi']
+                'References': p.get('referenced_works_count', 0),
+                'Citations per Year': p.get('citations_per_year', 0),
+                'Type': p['type'],
+                'DOI': p['doi'],
+                'Collaboration Type': p['collaboration_type'],
+                'Validation Source': p['validation'].get('source', 'N/A'),
+                'Validation Year': p['validation'].get('year', 'N/A')
             }
             for p in data['enriched_papers']
         ])
         
-        csv = export_df.to_csv(index=False).encode('utf-8')
-        st.download_button("📊 Download CSV", csv, "uninst_analysis.csv", "text/csv", use_container_width=True)
+        with col1:
+            csv = export_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📊 Download CSV",
+                data=csv,
+                file_name=f"uninst_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        
+        with col2:
+            # Excel export
+            import io
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                export_df.to_excel(writer, sheet_name='All Papers', index=False)
+                
+                # Add summary sheet
+                summary_data = {
+                    'Metric': ['Institution', 'ROR', 'Country', 'Total Papers', 'Total Citations', 
+                              'Average Citations', 'Validated DOIs', 'Analysis Date'],
+                    'Value': [
+                        st.session_state['institution_name'],
+                        st.session_state['institution_ror'],
+                        st.session_state['institution_country'],
+                        data['total_papers'],
+                        data['total_citations'],
+                        f"{data['total_citations']/data['total_papers']:.2f}" if data['total_papers'] > 0 else 0,
+                        validation['validated'],
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    ]
+                }
+                pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
+                
+                # Add validation stats
+                pd.DataFrame([validation]).to_excel(writer, sheet_name='Validation', index=False)
+                
+                # Add collaboration stats
+                collab_df = pd.DataFrame(
+                    list(data['collaboration_types'].items()),
+                    columns=['Collaboration Type', 'Count']
+                )
+                collab_df.to_excel(writer, sheet_name='Collaborations', index=False)
+            
+            st.download_button(
+                label="📈 Download Excel",
+                data=output.getvalue(),
+                file_name=f"uninst_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+        
+        with col3:
+            # JSON export
+            json_data = json.dumps({
+                'institution': {
+                    'name': st.session_state['institution_name'],
+                    'ror': st.session_state['institution_ror'],
+                    'country': st.session_state['institution_country']
+                },
+                'years': st.session_state['years_range'],
+                'analysis_date': datetime.now().isoformat(),
+                'summary': {
+                    'total_papers': data['total_papers'],
+                    'total_citations': data['total_citations'],
+                    'validation_stats': validation,
+                    'collaboration_types': data['collaboration_types']
+                },
+                'papers': [
+                    {
+                        'title': p['title'],
+                        'authors': p['authors'],
+                        'year': p['publication_year'],
+                        'citations': p['cited_by_count'],
+                        'references': p.get('referenced_works_count', 0),
+                        'doi': p['doi']
+                    }
+                    for p in data['enriched_papers'][:100]  # Limit for JSON
+                ]
+            }, indent=2, ensure_ascii=False).encode('utf-8')
+            
+            st.download_button(
+                label="📋 Download JSON",
+                data=json_data,
+                file_name=f"uninst_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
         
         st.markdown('</div>', unsafe_allow_html=True)
     
     # Footer
-    st.markdown(f'<div class="footer">UnInst Analytics | Data: OpenAlex, Crossref</div>', unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class="footer">
+        <p>🏛️ UnInst Analytics | Data: OpenAlex, Crossref | Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
