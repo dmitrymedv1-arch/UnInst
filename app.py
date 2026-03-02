@@ -529,8 +529,9 @@ MAX_PAGES = 50  # Maximum pages to fetch (200 papers per page)
 WARN_PAPERS_THRESHOLD = 5000  # Show warning above this
 
 # Database files
-WOS_FILE = "IF.xlsx"
-SCOPUS_FILE = "CS.xlsx"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+WOS_FILE = os.path.join(BASE_DIR, "IF.xlsx")
+SCOPUS_FILE = os.path.join(BASE_DIR, "CS.xlsx")
 
 # Recent institutions storage
 if 'recent_institutions' not in st.session_state:
@@ -2998,3 +2999,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
