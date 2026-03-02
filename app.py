@@ -561,6 +561,10 @@ if 'year_input_text' not in st.session_state:
     st.session_state['year_input_text'] = ''
 if 'data_collection_started' not in st.session_state:
     st.session_state['data_collection_started'] = False
+if 'issn_cache' not in st.session_state:
+    st.session_state['issn_cache'] = {}
+if 'crossref_data' not in st.session_state:
+    st.session_state['crossref_data'] = None
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -663,6 +667,7 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                     doi = item.get('DOI', '')
                     doi_lower = doi.lower()
                     
+                    # Extract publication date
                     pub_date = None
                     
                     if 'published-print' in item:
@@ -705,22 +710,49 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                                 'source': 'issued'
                             }
                     
-                    # Extract ISSN information
+                    # Extract ISSN information from Crossref
                     issn_print = None
                     issn_electronic = None
+                    issn_list = []
                     
+                    # Method 1: Get from ISSN array
                     if 'ISSN' in item and item['ISSN']:
-                        for issn in item['ISSN']:
-                            if len(issn) == 9 and issn[4] == '-':  # Standard ISSN format
-                                if not issn_print:
-                                    issn_print = issn
+                        issn_list = item['ISSN']
+                        # Try to determine print/electronic from issn-type if available
                     
-                    if 'issn-type' in item:
+                    # Method 2: Get from issn-type (most reliable for type identification)
+                    if 'issn-type' in item and isinstance(item['issn-type'], list):
                         for issn_type in item['issn-type']:
-                            if issn_type.get('type') == 'print':
-                                issn_print = issn_type.get('value')
-                            elif issn_type.get('type') == 'electronic' or issn_type.get('type') == 'e-issn':
-                                issn_electronic = issn_type.get('value')
+                            if isinstance(issn_type, dict):
+                                issn_value = issn_type.get('value', '')
+                                issn_type_name = issn_type.get('type', '').lower()
+                                
+                                if issn_type_name == 'print':
+                                    issn_print = issn_value
+                                elif issn_type_name == 'electronic' or issn_type_name == 'e-issn':
+                                    issn_electronic = issn_value
+                                
+                                # Add to list if not already there
+                                if issn_value and issn_value not in issn_list:
+                                    issn_list.append(issn_value)
+                    
+                    # Method 3: If we have ISSN list but no type info, try to infer
+                    if not issn_print and not issn_electronic and issn_list:
+                        # If only one ISSN, assume it's print
+                        if len(issn_list) == 1:
+                            issn_print = issn_list[0]
+                        # If two ISSNs, assume first is print, second is electronic
+                        elif len(issn_list) >= 2:
+                            issn_print = issn_list[0]
+                            issn_electronic = issn_list[1]
+                    
+                    # Get container title (journal name)
+                    container_title = None
+                    if 'container-title' in item and item['container-title']:
+                        if isinstance(item['container-title'], list) and item['container-title']:
+                            container_title = item['container-title'][0]
+                        else:
+                            container_title = item['container-title']
                     
                     if pub_date:
                         results[doi_lower] = {
@@ -731,15 +763,17 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                             'day': pub_date['day'],
                             'source': pub_date['source'],
                             'title': item.get('title', [''])[0] if item.get('title') else '',
-                            'container-title': item.get('container-title', [''])[0] if item.get('container-title') else '',
+                            'container-title': container_title or '',
                             'publisher': item.get('publisher', ''),
                             'type': item.get('type', ''),
                             'issn_print': issn_print,
                             'issn_electronic': issn_electronic,
+                            'issn_list': issn_list,  # Store full list for reference
                             'is_referenced_by_count': item.get('is-referenced-by-count', 0),
                             'references_count': len(item.get('reference', [])) if item.get('reference') else 0
                         }
             
+            # Rate limiting
             time.sleep(0.1)
             
         except Exception as e:
@@ -911,17 +945,24 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
             validation_stats['validated'] += 1
             crossref_year = crossref_data[doi_lower]['year']
             
+            # Create date strings
+            first_date = f"{crossref_data[doi_lower]['year']}-{crossref_data[doi_lower]['month']:02d}-{crossref_data[doi_lower]['day']:02d}"
+            
+            # Get the earliest date from OpenAlex if available
+            openalex_date = paper.get('publication_date', '')
+            
             paper['_validation'] = {
                 'source': 'crossref',
                 'year': crossref_year,
                 'original_year': paper.get('publication_year'),
                 'kept': crossref_year in target_years,
                 'crossref_doi': crossref_data[doi_lower]['doi'],
-                'first_date': f"{crossref_data[doi_lower]['year']}-{crossref_data[doi_lower]['month']:02d}-{crossref_data[doi_lower]['day']:02d}",
-                'final_date': paper.get('publication_date', ''),
+                'first_date': first_date,
+                'final_date': openalex_date or first_date,  # Use Crossref date if OpenAlex date not available
                 'crossref_publisher': crossref_data[doi_lower].get('publisher', ''),
                 'issn_print': crossref_data[doi_lower].get('issn_print', ''),
                 'issn_electronic': crossref_data[doi_lower].get('issn_electronic', ''),
+                'issn_list': crossref_data[doi_lower].get('issn_list', []),
                 'is_referenced_by_count': crossref_data[doi_lower].get('is_referenced_by_count', 0),
                 'references_count': crossref_data[doi_lower].get('references_count', 0)
             }
@@ -951,7 +992,7 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
     return filtered_papers, validation_stats
 
 def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict:
-    """Enrich paper data with additional fields"""
+    """Enrich paper data with additional fields including ISSN from both sources"""
     doi = paper.get('doi', '').replace('https://doi.org/', '')
     doi_lower = doi.lower() if doi else ''
     
@@ -968,12 +1009,34 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
     if crossref_data and doi_lower in crossref_data:
         publisher_crossref = crossref_data[doi_lower].get('publisher')
     
-    # Get ISSN from Crossref validation
+    # Get ISSN from multiple sources with priority
     issn_print = None
     issn_electronic = None
+    issn_list = []
+    
+    # Priority 1: Get from Crossref validation data (already processed)
     if crossref_data and doi_lower in crossref_data:
         issn_print = crossref_data[doi_lower].get('issn_print')
         issn_electronic = crossref_data[doi_lower].get('issn_electronic')
+        issn_list = crossref_data[doi_lower].get('issn_list', [])
+    
+    # Priority 2: Get from OpenAlex source if Crossref data not available
+    if not issn_print and not issn_electronic:
+        primary_location = paper.get('primary_location')
+        if primary_location and isinstance(primary_location, dict):
+            source = primary_location.get('source')
+            if source and isinstance(source, dict):
+                # OpenAlex stores ISSN in a list
+                oa_issn_list = source.get('issn', [])
+                if oa_issn_list and isinstance(oa_issn_list, list):
+                    issn_list = oa_issn_list
+                    # Try to infer print/electronic
+                    if len(issn_list) == 1:
+                        issn_print = issn_list[0]
+                    elif len(issn_list) >= 2:
+                        # Often first is print, second is electronic in OpenAlex too
+                        issn_print = issn_list[0]
+                        issn_electronic = issn_list[1]
     
     enriched = {
         'id': paper.get('id', ''),
@@ -991,10 +1054,12 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
         'publisher': publisher_crossref or publisher_oa or 'Unknown',
         'issn_print': issn_print,
         'issn_electronic': issn_electronic,
+        'issn_list': issn_list,  # Store full list for reference
         'is_referenced_by_count': paper.get('_validation', {}).get('is_referenced_by_count', 0) if paper.get('_validation') else 0,
         'references_count': paper.get('_validation', {}).get('references_count', paper.get('referenced_works_count', 0)) if paper.get('_validation') else paper.get('referenced_works_count', 0)
     }
     
+    # Authors processing
     authorships = paper.get('authorships', [])
     authors = []
     author_affiliations = []
@@ -1018,6 +1083,7 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
     enriched['author_countries'] = list(author_countries)
     enriched['affiliations'] = list(set(author_affiliations))
     
+    # Journal name
     primary_location = paper.get('primary_location')
     if primary_location and isinstance(primary_location, dict):
         source = primary_location.get('source')
@@ -1028,6 +1094,7 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
     else:
         enriched['journal'] = 'Unknown'
     
+    # Collaboration type
     inst_count = len(set(author_affiliations))
     country_count = len(author_countries)
     
@@ -1202,9 +1269,26 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         status_container.text(f"Found {len(dois)} DOIs for validation")
         progress_bar.progress(0.45)
         
-        status_container.text("Validating dates with Crossref...")
+        # Check cache for existing ISSN data
+        dois_to_fetch = [doi for doi in dois if doi.lower() not in st.session_state['issn_cache']]
         
-        crossref_data = make_crossref_request_batch(dois)
+        if dois_to_fetch:
+            status_container.text(f"Fetching new data for {len(dois_to_fetch)} DOIs from Crossref...")
+            new_crossref_data = make_crossref_request_batch(dois_to_fetch)
+            
+            # Update cache
+            for doi_lower, data in new_crossref_data.items():
+                st.session_state['issn_cache'][doi_lower] = data
+        else:
+            status_container.text("Using cached data for all DOIs")
+            new_crossref_data = {}
+        
+        # Build complete crossref_data from cache
+        crossref_data = {}
+        for doi in dois:
+            doi_lower = doi.lower()
+            if doi_lower in st.session_state['issn_cache']:
+                crossref_data[doi_lower] = st.session_state['issn_cache'][doi_lower]
         
         status_container.text(f"✅ Validated {len(crossref_data)} DOIs")
         progress_bar.progress(0.7)
@@ -2155,13 +2239,14 @@ def main():
         export_df = pd.DataFrame([
             {
                 'DOI': p['doi'],
-                'First Date': p['validation'].get('first_date', p.get('publication_date', '')),
-                'Final Date': p['validation'].get('final_date', p.get('publication_date', '')),
+                'First Date': p['validation'].get('first_date', p.get('publication_date', '')) if p.get('validation') else p.get('publication_date', ''),
+                'Final Date': p['validation'].get('final_date', p.get('publication_date', '')) if p.get('validation') else p.get('publication_date', ''),
                 'Authors': '; '.join(p['authors']),
                 'Title': p['title'],
                 'Journal': p['journal'],
                 'ISSN (Print)': p.get('issn_print', ''),
                 'ISSN (Electronic)': p.get('issn_electronic', ''),
+                'ISSN List': ', '.join(p.get('issn_list', [])) if p.get('issn_list') else '',
                 'Publisher': p.get('publisher', 'Unknown'),
                 'References': p.get('references_count', 0),
                 'Citations (CR)': p.get('is_referenced_by_count', 0),
@@ -2264,3 +2349,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
