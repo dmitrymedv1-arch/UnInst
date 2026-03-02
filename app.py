@@ -533,35 +533,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WOS_FILE = os.path.join(BASE_DIR, "IF.xlsx")
 SCOPUS_FILE = os.path.join(BASE_DIR, "CS.xlsx")
 
-# ОТЛАДКА: проверим все возможные пути
-print("=== DEBUG: File paths ===")
-print(f"__file__: {__file__}")
-print(f"BASE_DIR: {BASE_DIR}")
-print(f"Current working directory: {os.getcwd()}")
-print(f"WOS_FILE exists: {os.path.exists(WOS_FILE)}")
-print(f"SCOPUS_FILE exists: {os.path.exists(SCOPUS_FILE)}")
-
-# Альтернативные пути для проверки
-alt_wos = os.path.join(os.getcwd(), "IF.xlsx")
-alt_scopus = os.path.join(os.getcwd(), "CS.xlsx")
-print(f"Alt WOS path (cwd): {alt_wos} exists: {os.path.exists(alt_wos)}")
-print(f"Alt Scopus path (cwd): {alt_scopus} exists: {os.path.exists(alt_scopus)}")
-
-# Если файлы не найдены, используем альтернативный путь
-if not os.path.exists(WOS_FILE) and os.path.exists(alt_wos):
-    WOS_FILE = alt_wos
-    print(f"Using alternative WOS path: {WOS_FILE}")
-
-if not os.path.exists(SCOPUS_FILE) and os.path.exists(alt_scopus):
-    SCOPUS_FILE = alt_scopus
-    print(f"Using alternative Scopus path: {SCOPUS_FILE}")
-    
-# Recent institutions storage
-if 'recent_institutions' not in st.session_state:
-    st.session_state['recent_institutions'] = []
-if 'expanded_details' not in st.session_state:
-    st.session_state['expanded_details'] = {}
-    
 # ============================================================================
 # SESSION STATE INITIALIZATION
 # ============================================================================
@@ -3022,6 +2993,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
