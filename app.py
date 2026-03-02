@@ -2055,7 +2055,7 @@ def plot_quartile_distribution(papers: List[Dict], database: str, colors: Dict, 
             quartile_counts[q] = 0
     
     # Sort in order Q1, Q2, Q3, Q4
-    sorted_items = sorted(quartile_counts.items(), key=lambda x: x[0])
+    sorted_items = sorted([(str(k), v) for k, v in quartile_counts.items()], key=lambda x: x[0])
     
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -2950,6 +2950,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
