@@ -505,108 +505,6 @@ def normalize_institution_name(name: str) -> str:
     name = name.replace('-', ' ')
     return name
 
-def normalize_author_name(author_name: str) -> str:
-    """
-    Нормализует имя автора для сравнения разных вариантов написания.
-    Примеры:
-        "Н. М. Поротникова" -> "поротникова н"
-        "Anna V. Khodimchuk" -> "khodimchuk a"
-        "Elena Yu Pikalova" -> "pikalova e"
-        "E. Pikalova" -> "pikalova e"
-        "E.Y. Pikalova" -> "pikalova e"
-        "Поротникова Н.М." -> "поротникова н"
-    """
-    if not author_name or not isinstance(author_name, str):
-        return ""
-    
-    # Удаляем лишние пробелы и приводим к нижнему регистру
-    name = re.sub(r'\s+', ' ', author_name.strip()).lower()
-    
-    # Разделяем на части
-    parts = name.split()
-    
-    if not parts:
-        return ""
-    
-    # Определяем, где фамилия (обычно последнее слово)
-    # и где инициалы/имена
-    last_name = parts[-1]  # Последнее слово - вероятно фамилия
-    
-    # Обработка случая с точками в инициалах (E.Y. Pikalova -> e.y. pikalova)
-    # Объединяем инициалы, если они разделены точками без пробелов
-    initials = []
-    for part in parts[:-1]:  # Все кроме последнего
-        # Убираем точки и дефисы для сравнения
-        clean_part = re.sub(r'[.\-\s]', '', part)
-        if clean_part:  # Если после очистки что-то осталось
-            initials.append(clean_part[0])  # Берем первую букву
-    
-    # Формируем ключ для сравнения: "фамилия первая_буква_первого_инициала"
-    if initials:
-        first_initial = initials[0]  # Первая буква первого инициала
-        normalized = f"{last_name} {first_initial}"
-    else:
-        # Если нет инициалов, используем только фамилию
-        normalized = last_name
-    
-    # Очищаем от специальных символов
-    normalized = re.sub(r'[^\w\s]', '', normalized)
-    
-    return normalized
-
-
-def extract_author_variations(author_name: str) -> Set[str]:
-    """
-    Извлекает все возможные варианты написания автора для сопоставления.
-    Возвращает set возможных ключей.
-    """
-    variations = set()
-    
-    if not author_name:
-        return variations
-    
-    # Основная нормализация
-    variations.add(normalize_author_name(author_name))
-    
-    # Разделяем на части для дополнительных вариаций
-    parts = author_name.split()
-    
-    if len(parts) >= 2:
-        last_name = parts[-1]
-        
-        # Вариант: только фамилия
-        variations.add(last_name.lower())
-        
-        # Вариант: фамилия + все возможные комбинации инициалов
-        initials_parts = []
-        for part in parts[:-1]:
-            clean_part = re.sub(r'[.\-\s]', '', part)
-            if clean_part:
-                initials_parts.append(clean_part[0])
-        
-        if initials_parts:
-            # Все инициалы подряд
-            all_initials = ''.join(initials_parts)
-            variations.add(f"{last_name.lower()} {all_initials}")
-            
-            # Только первый инициал
-            variations.add(f"{last_name.lower()} {initials_parts[0]}")
-    
-    return variations
-
-
-def get_primary_author_key(author_name: str) -> str:
-    """
-    Получает основной ключ для группировки автора.
-    Используется для объединения разных написаний одного автора.
-    """
-    if not author_name:
-        return ""
-    
-    # Пытаемся найти OpenAlex ID или другой устойчивый идентификатор
-    # Но в данном случае используем нормализованное имя
-    return normalize_author_name(author_name)
-
 def is_ror_id(text: str) -> bool:
     """Check if text is a valid ROR ID"""
     # ROR IDs are like: 0521rv456
@@ -635,77 +533,34 @@ def validate_year_range(years: List[int]) -> Tuple[bool, str]:
     stop=stop_after_attempt(MAX_RETRIES),
     wait=wait_exponential(multiplier=1, max=10)
 )
-def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
-    """Make synchronous batch request to Crossref API with author data"""
-    if not dois:
-        return {}
+def make_openalex_request(url: str, params: Optional[Dict] = None) -> Optional[Dict]:
+    """Make request to OpenAlex API with retry logic"""
+    if params is None:
+        params = {}
     
-    unique_dois = list(set(dois))
-    results = {}
+    params['mailto'] = MAILTO
     
-    for i in range(0, len(unique_dois), BATCH_SIZE):
-        batch = unique_dois[i:i + BATCH_SIZE]
+    try:
+        response = requests.get(
+            url,
+            params=params,
+            headers=HEADERS,
+            timeout=30
+        )
         
-        try:
-            response = requests.post(
-                f"{CROSSREF_BASE_URL}/works",
-                json={"ids": batch},
-                headers={'Content-Type': 'application/json'},
-                timeout=30
-            )
+        if response.status_code == 200:
+            return response.json()
+        elif response.status_code == 429:
+            retry_after = int(response.headers.get('Retry-After', 5))
+            time.sleep(retry_after)
+            raise Exception("Rate limited")
+        else:
+            st.error(f"OpenAlex API error: {response.status_code}")
+            return None
             
-            if response.status_code == 200:
-                data = response.json()
-                
-                for item in data.get('items', []):
-                    doi = item.get('DOI', '')
-                    doi_lower = doi.lower()
-                    
-                    # Extract authors from Crossref
-                    authors = []
-                    if 'author' in item:
-                        for author in item['author']:
-                            if 'given' in author and 'family' in author:
-                                # Полное имя
-                                full_name = f"{author['given']} {author['family']}"
-                                authors.append({
-                                    'full': full_name,
-                                    'given': author['given'],
-                                    'family': author['family'],
-                                    'raw_name': full_name  # Можно добавить raw если есть
-                                })
-                            elif 'name' in author:  # Для организаций или если имя в одном поле
-                                authors.append({
-                                    'full': author['name'],
-                                    'raw_name': author['name']
-                                })
-                    
-                    # Extract publication date
-                    pub_date = None
-                    # ... (остальной код для дат как был)
-                    
-                    if pub_date:
-                        results[doi_lower] = {
-                            'doi': doi,
-                            'doi_lower': doi_lower,
-                            'year': pub_date['year'],
-                            'month': pub_date['month'],
-                            'day': pub_date['day'],
-                            'source': pub_date['source'],
-                            'authors': authors,  # Добавляем авторов из Crossref
-                            'title': item.get('title', [''])[0] if item.get('title') else '',
-                            'container-title': item.get('container-title', [''])[0] if item.get('container-title') else '',
-                            'publisher': item.get('publisher', ''),
-                            'type': item.get('type', '')
-                        }
-            
-            time.sleep(0.1)
-            
-        except Exception as e:
-            st.warning(f"Error validating batch {i//BATCH_SIZE + 1}: {str(e)}")
-            continue
-    
-    return results
+    except Exception as e:
+        st.error(f"Request error: {str(e)}")
+        raise
 
 @retry(
     stop=stop_after_attempt(MAX_RETRIES),
@@ -1016,7 +871,7 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
     return filtered_papers, validation_stats
 
 def enrich_paper_data(paper: Dict) -> Dict:
-    """Enrich paper data with additional fields, including improved author handling"""
+    """Enrich paper data with additional fields"""
     enriched = {
         'id': paper.get('id', ''),
         'doi': paper.get('doi', '').replace('https://doi.org/', ''),
@@ -1030,46 +885,19 @@ def enrich_paper_data(paper: Dict) -> Dict:
         'validation': paper.get('_validation', {})
     }
     
-    # Authors - улучшенная обработка
+    # Authors
     authorships = paper.get('authorships', [])
-    authors_raw = []  # Оригинальные имена для отображения
-    authors_normalized = []  # Нормализованные для группировки
+    authors = []
     author_affiliations = []
     author_countries = set()
-    author_details = []  # Детальная информация об авторах
     
     for authorship in authorships:
         if authorship.get('author'):
-            # Получаем данные автора из OpenAlex
-            author_data = authorship['author']
-            author_name = author_data.get('display_name', '')
-            author_id = author_data.get('id', '')  # OpenAlex ID автора
-            
-            # Также проверяем наличие raw_author_name (оригинальное написание)
-            raw_author_name = authorship.get('raw_author_name', '')
-            
-            if author_name or raw_author_name:
-                # Для отображения используем raw_author_name если есть, иначе display_name
-                display_name = raw_author_name or author_name
+            author_name = authorship['author'].get('display_name', '')
+            if author_name:
+                authors.append(author_name)
                 
-                if display_name:
-                    authors_raw.append(display_name)
-                    
-                    # Нормализуем для группировки
-                    normalized_key = get_primary_author_key(display_name)
-                    if normalized_key:
-                        authors_normalized.append(normalized_key)
-                    
-                    # Сохраняем детальную информацию
-                    author_details.append({
-                        'display_name': display_name,
-                        'raw_name': raw_author_name,
-                        'normalized_key': normalized_key,
-                        'openalex_id': author_id,
-                        'position': authorship.get('author_position', '')
-                    })
-                
-                # Получаем аффилиации для анализа коллабораций
+                # Get affiliations for collaboration analysis
                 institutions = authorship.get('institutions', [])
                 for inst in institutions:
                     if inst and inst.get('country_code'):
@@ -1077,14 +905,12 @@ def enrich_paper_data(paper: Dict) -> Dict:
                     if inst and inst.get('display_name'):
                         author_affiliations.append(inst['display_name'])
     
-    enriched['authors_raw'] = authors_raw  # Оригинальные имена для отображения
-    enriched['authors_normalized'] = authors_normalized  # Нормализованные для подсчета
-    enriched['author_details'] = author_details  # Детальная информация
-    enriched['author_count'] = len(authors_raw)
+    enriched['authors'] = authors
+    enriched['author_count'] = len(authors)
     enriched['author_countries'] = list(author_countries)
     enriched['affiliations'] = list(set(author_affiliations))
     
-    # Journal and publisher
+    # Journal and publisher - FIXED: Handle None source
     primary_location = paper.get('primary_location')
     if primary_location and isinstance(primary_location, dict):
         source = primary_location.get('source')
@@ -1142,7 +968,7 @@ def add_to_recent_institutions(inst: Dict):
 # ============================================================================
 
 def analyze_papers(papers: List[Dict]) -> Dict:
-    """Perform comprehensive analysis on papers with improved author grouping"""
+    """Perform comprehensive analysis on papers"""
     if not papers:
         # Return empty results if no papers
         return {
@@ -1151,8 +977,6 @@ def analyze_papers(papers: List[Dict]) -> Dict:
             'yearly_papers': {},
             'yearly_citations': {},
             'top_authors': [],
-            'top_authors_detailed': [],
-            'author_name_mapping': {},
             'top_journals': [],
             'top_publishers': [],
             'citation_distribution': {k: 0 for k in ['0', '1-4', '5-10', '11-30', '31-50', '51-100', '100+']},
@@ -1163,7 +987,7 @@ def analyze_papers(papers: List[Dict]) -> Dict:
             'enriched_papers': []
         }
     
-    enriched_papers = [enrich_paper_data(p) for p in papers if p]
+    enriched_papers = [enrich_paper_data(p) for p in papers if p]  # Filter out None papers
     
     # Basic stats
     total_papers = len(enriched_papers)
@@ -1174,71 +998,17 @@ def analyze_papers(papers: List[Dict]) -> Dict:
     yearly_citations = defaultdict(int)
     for p in enriched_papers:
         year = p['publication_year']
-        if year:
+        if year:  # Only process if year exists
             yearly_papers[year] += 1
             yearly_citations[year] += p['cited_by_count']
     
-    # Authors analysis - улучшенная группировка
-    author_counter = Counter()  # Для нормализованных ключей
-    author_display_names = defaultdict(set)  # Для хранения всех вариантов отображения
-    author_openalex_ids = defaultdict(set)  # Для хранения OpenAlex ID
-    
+    # Authors analysis
+    all_authors = []
     for p in enriched_papers:
-        # Используем нормализованные ключи для подсчета
-        for auth_key in p.get('authors_normalized', []):
-            if auth_key:
-                author_counter[auth_key] += 1
-        
-        # Сохраняем отображаемые имена и ID для каждого нормализованного ключа
-        for detail in p.get('author_details', []):
-            norm_key = detail.get('normalized_key')
-            if norm_key:
-                if detail.get('display_name'):
-                    author_display_names[norm_key].add(detail['display_name'])
-                if detail.get('openalex_id'):
-                    author_openalex_ids[norm_key].add(detail['openalex_id'])
+        all_authors.extend(p.get('authors', []))
     
-    # Создаем маппинг для отображения
-    author_name_mapping = {}
-    for norm_key in author_counter.keys():
-        # Выбираем наиболее полное имя для отображения
-        display_names = author_display_names.get(norm_key, set())
-        if display_names:
-            # Предпочитаем имена с кириллицей, если есть
-            cyrillic_names = [n for n in display_names if re.search(r'[а-яА-Я]', n)]
-            if cyrillic_names:
-                # Берем самое длинное кириллическое имя (обычно полное)
-                author_name_mapping[norm_key] = max(cyrillic_names, key=len)
-            else:
-                # Иначе самое длинное латинское имя
-                author_name_mapping[norm_key] = max(display_names, key=len)
-        else:
-            author_name_mapping[norm_key] = norm_key
-    
-    # Получаем топ авторов по нормализованным ключам
-    top_authors_normalized = author_counter.most_common(30)  # Берем больше для возможной фильтрации
-    
-    # Преобразуем в формат для отображения с правильными именами
-    top_authors_display = []
-    for norm_key, count in top_authors_normalized:
-        display_name = author_name_mapping.get(norm_key, norm_key)
-        top_authors_display.append((display_name, count, norm_key))
-    
-    # Детальная информация о топ авторах
-    top_authors_detailed = []
-    for display_name, count, norm_key in top_authors_display[:20]:
-        # Собираем все OpenAlex ID для этого автора
-        author_ids = list(author_openalex_ids.get(norm_key, set()))
-        # Собираем все варианты написания
-        name_variations = list(author_display_names.get(norm_key, set()))
-        
-        top_authors_detailed.append({
-            'display_name': display_name,
-            'normalized_key': norm_key,
-            'publication_count': count,
-            'openalex_ids': author_ids,
-            'name_variations': name_variations
-        })
+    author_counts = Counter(all_authors)
+    top_authors = author_counts.most_common(20)
     
     # Journals analysis
     journal_counts = Counter(p.get('journal', 'Unknown') for p in enriched_papers)
@@ -1290,9 +1060,7 @@ def analyze_papers(papers: List[Dict]) -> Dict:
         'total_citations': total_citations,
         'yearly_papers': dict(yearly_papers),
         'yearly_citations': dict(yearly_citations),
-        'top_authors': [(item['display_name'], item['publication_count']) for item in top_authors_detailed[:20]],
-        'top_authors_detailed': top_authors_detailed,
-        'author_name_mapping': author_name_mapping,
+        'top_authors': top_authors,
         'top_journals': top_journals,
         'top_publishers': top_publishers,
         'citation_distribution': citation_ranges,
@@ -1448,22 +1216,9 @@ def plot_yearly_citations(yearly_citations: Dict[int, int], colors: Dict):
     return fig
 
 def plot_top_authors(authors_data: List[Tuple[str, int]], colors: Dict):
-    """Plot top authors with proper name display"""
-    if not authors_data:
-        return None
-    
-    # Подготавливаем данные для отображения
-    authors = []
-    counts = []
-    
-    for author, count in authors_data[:15]:
-        # Обрезаем очень длинные имена, но сохраняем кириллицу
-        if len(author) > 40:
-            display_name = author[:37] + '...'
-        else:
-            display_name = author
-        authors.append(display_name)
-        counts.append(count)
+    """Plot top authors"""
+    authors = [a[0][:30] + '...' if len(a[0]) > 30 else a[0] for a in authors_data[:15]]
+    counts = [a[1] for a in authors_data[:15]]
     
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -1472,10 +1227,7 @@ def plot_top_authors(authors_data: List[Tuple[str, int]], colors: Dict):
         orientation='h',
         marker_color=colors['primary'],
         marker_line_color=colors['gradient_end'],
-        marker_line_width=1,
-        text=counts[::-1],
-        textposition='outside',
-        hovertemplate='<b>%{y}</b><br>Publications: %{x}<extra></extra>'
+        marker_line_width=1
     ))
     
     fig.update_layout(
@@ -1483,50 +1235,11 @@ def plot_top_authors(authors_data: List[Tuple[str, int]], colors: Dict):
         xaxis_title='Number of Publications',
         yaxis_title='Author',
         template='plotly_white',
-        height=max(500, len(authors) * 30),  # Адаптивная высота
-        showlegend=False,
-        margin=dict(l=200, r=50, t=50, b=50)  # Больше места для имен слева
+        height=500,
+        showlegend=False
     )
     
-    # Настраиваем отображение текста на русском
-    fig.update_xaxis(title_font=dict(size=12))
-    fig.update_yaxis(title_font=dict(size=12), tickfont=dict(size=11))
-    
     return fig
-
-def display_author_details(authors_detailed: List[Dict], colors: Dict):
-    """Display detailed author information including name variations"""
-    if not authors_detailed:
-        st.info("No author data available")
-        return
-    
-    # Создаем DataFrame для отображения
-    df_data = []
-    for author in authors_detailed[:20]:
-        name_variations = author.get('name_variations', [])
-        # Показываем до 3 вариантов имени
-        variations_sample = list(name_variations)[:3]
-        variations_text = ', '.join(variations_sample)
-        if len(name_variations) > 3:
-            variations_text += f' и еще {len(name_variations) - 3}'
-        
-        df_data.append({
-            'Автор': author['display_name'],
-            'Публикаций': author['publication_count'],
-            'Варианты написания': variations_text,
-            'ID в OpenAlex': ', '.join(author.get('openalex_ids', [])[:2])
-        })
-    
-    df = pd.DataFrame(df_data)
-    st.dataframe(df, use_container_width=True)
-    
-    # Добавляем пояснение
-    st.markdown(f"""
-    <div class="info-box">
-        <small>ℹ️ Разные варианты написания одного автора объединены. 
-        Например: "Elena Pikalova", "E. Pikalova", "E.Y. Pikalova" считаются одним автором.</small>
-    </div>
-    """, unsafe_allow_html=True)
 
 def plot_top_journals(journals_data: List[Tuple[str, int]], colors: Dict):
     """Plot top journals"""
@@ -2229,17 +1942,10 @@ def main():
             st.markdown("### Top 20 Authors")
             
             if data['top_authors']:
-                # Показываем график
                 fig_authors = plot_top_authors(data['top_authors'], colors)
                 st.plotly_chart(fig_authors, use_container_width=True)
                 
-                # Добавляем раскрывающийся раздел с детальной информацией
-                with st.expander("📋 Детальная информация об авторах"):
-                    if 'top_authors_detailed' in data:
-                        display_author_details(data['top_authors_detailed'], colors)
-                
-                # Простая таблица
-                st.markdown("#### Краткая таблица")
+                # Table
                 df_authors = pd.DataFrame(data['top_authors'], columns=['Author', 'Publications'])
                 st.dataframe(df_authors, use_container_width=True)
             else:
@@ -2440,5 +2146,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
