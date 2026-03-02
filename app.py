@@ -20,6 +20,7 @@ import logging
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import warnings
 warnings.filterwarnings('ignore')
+import io
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -167,9 +168,38 @@ UI_COLOR_PALETTES = [
     }
 ]
 
+# ============================================================================
+# COLOR SCALES FOR PLOTS
+# ============================================================================
+
+COLOR_SCALES = [
+    'Viridis',
+    'Plasma',
+    'Inferno',
+    'Magma',
+    'Cividis',
+    'Turbo',
+    'Blues',
+    'Reds',
+    'Greens',
+    'Purples',
+    'Oranges',
+    'YlOrRd',
+    'YlGnBu',
+    'RdYlGn',
+    'Spectral',
+    'Coolwarm',
+    'Portland',
+    'Electric',
+    'Hot',
+    'Blackbody'
+]
+
 # Initialize or get UI palette from session
 if 'ui_palette' not in st.session_state:
     st.session_state['ui_palette'] = random.choice(UI_COLOR_PALETTES)
+if 'color_scale' not in st.session_state:
+    st.session_state['color_scale'] = 'Viridis'
 if 'previous_palette' not in st.session_state:
     st.session_state['previous_palette'] = st.session_state['ui_palette']['name']
 
@@ -435,6 +465,49 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ============================================================================
+# SCIENTIFIC PLOT STYLE CONFIGURATION
+# ============================================================================
+
+plt.style.use('default')
+plt.rcParams.update({
+    'font.size': 10,
+    'font.family': 'serif',
+    'axes.labelsize': 11,
+    'axes.labelweight': 'bold',
+    'axes.titlesize': 12,
+    'axes.titleweight': 'bold',
+    'axes.facecolor': 'white',
+    'axes.edgecolor': 'black',
+    'axes.linewidth': 1.0,
+    'axes.grid': False,
+    'xtick.color': 'black',
+    'ytick.color': 'black',
+    'xtick.labelsize': 10,
+    'ytick.labelsize': 10,
+    'xtick.direction': 'out',
+    'ytick.direction': 'out',
+    'xtick.major.size': 4,
+    'xtick.minor.size': 2,
+    'ytick.major.size': 4,
+    'ytick.minor.size': 2,
+    'xtick.major.width': 0.8,
+    'ytick.major.width': 0.8,
+    'legend.fontsize': 10,
+    'legend.frameon': True,
+    'legend.framealpha': 0.9,
+    'legend.edgecolor': 'black',
+    'legend.fancybox': False,
+    'figure.dpi': 600,
+    'savefig.dpi': 600,
+    'savefig.bbox': 'tight',
+    'savefig.pad_inches': 0.1,
+    'figure.facecolor': 'white',
+    'lines.linewidth': 1.5,
+    'lines.markersize': 6,
+    'errorbar.capsize': 3,
+})
+
+# ============================================================================
 # CONFIGURATION
 # ============================================================================
 
@@ -497,17 +570,13 @@ def normalize_institution_name(name: str) -> str:
     """Normalize institution name for search"""
     if not name:
         return ""
-    # Remove extra spaces, convert to lowercase
     name = re.sub(r'\s+', ' ', name.strip().lower())
-    # Remove common punctuation
     name = re.sub(r'[^\w\s-]', '', name)
-    # Handle hyphenated variations
     name = name.replace('-', ' ')
     return name
 
 def is_ror_id(text: str) -> bool:
     """Check if text is a valid ROR ID"""
-    # ROR IDs are like: 0521rv456
     pattern = r'^[a-z0-9]{9,10}$'
     return bool(re.match(pattern, text.strip()))
 
@@ -571,15 +640,12 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
     if not dois:
         return {}
     
-    # Remove duplicates but preserve original case for return
     unique_dois = list(set(dois))
     results = {}
     
-    # Process in batches
     for i in range(0, len(unique_dois), BATCH_SIZE):
         batch = unique_dois[i:i + BATCH_SIZE]
         
-        # Prepare batch request
         payload = {"ids": batch}
         
         try:
@@ -593,15 +659,12 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
             if response.status_code == 200:
                 data = response.json()
                 
-                # Parse results
                 for item in data.get('items', []):
                     doi = item.get('DOI', '')
                     doi_lower = doi.lower()
                     
-                    # Extract publication date with priority
                     pub_date = None
                     
-                    # Priority 1: published-print
                     if 'published-print' in item:
                         date_parts = item['published-print'].get('date-parts', [[]])[0]
                         if date_parts:
@@ -612,7 +675,6 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                                 'source': 'published-print'
                             }
                     
-                    # Priority 2: published (main date)
                     elif 'published' in item:
                         date_parts = item['published'].get('date-parts', [[]])[0]
                         if date_parts:
@@ -623,7 +685,6 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                                 'source': 'published'
                             }
                     
-                    # Priority 3: published-online
                     elif 'published-online' in item:
                         date_parts = item['published-online'].get('date-parts', [[]])[0]
                         if date_parts:
@@ -634,7 +695,6 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                                 'source': 'published-online'
                             }
                     
-                    # Priority 4: issued
                     elif 'issued' in item:
                         date_parts = item['issued'].get('date-parts', [[]])[0]
                         if date_parts:
@@ -645,10 +705,26 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                                 'source': 'issued'
                             }
                     
+                    # Extract ISSN information
+                    issn_print = None
+                    issn_electronic = None
+                    
+                    if 'ISSN' in item and item['ISSN']:
+                        for issn in item['ISSN']:
+                            if len(issn) == 9 and issn[4] == '-':  # Standard ISSN format
+                                if not issn_print:
+                                    issn_print = issn
+                    
+                    if 'issn-type' in item:
+                        for issn_type in item['issn-type']:
+                            if issn_type.get('type') == 'print':
+                                issn_print = issn_type.get('value')
+                            elif issn_type.get('type') == 'electronic' or issn_type.get('type') == 'e-issn':
+                                issn_electronic = issn_type.get('value')
+                    
                     if pub_date:
-                        # Store by lowercase DOI for lookup, but preserve original for display
                         results[doi_lower] = {
-                            'doi': doi,  # Store original case
+                            'doi': doi,
                             'doi_lower': doi_lower,
                             'year': pub_date['year'],
                             'month': pub_date['month'],
@@ -657,11 +733,14 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                             'title': item.get('title', [''])[0] if item.get('title') else '',
                             'container-title': item.get('container-title', [''])[0] if item.get('container-title') else '',
                             'publisher': item.get('publisher', ''),
-                            'type': item.get('type', '')
+                            'type': item.get('type', ''),
+                            'issn_print': issn_print,
+                            'issn_electronic': issn_electronic,
+                            'is_referenced_by_count': item.get('is-referenced-by-count', 0),
+                            'references_count': len(item.get('reference', [])) if item.get('reference') else 0
                         }
             
-            # Rate limiting
-            time.sleep(0.1)  # 10 requests per second max
+            time.sleep(0.1)
             
         except Exception as e:
             st.warning(f"Error validating batch {i//BATCH_SIZE + 1}: {str(e)}")
@@ -726,12 +805,10 @@ def parse_year_input(year_str: str) -> List[int]:
     """Parse year input from user (e.g., '2023', '2023-2026', '2022-2024,2026')"""
     years = set()
     
-    # Split by commas
     parts = year_str.replace(' ', '').split(',')
     
     for part in parts:
         if '-' in part:
-            # Range
             start, end = part.split('-')
             try:
                 start_year = int(start)
@@ -741,7 +818,6 @@ def parse_year_input(year_str: str) -> List[int]:
                 st.error(f"Invalid year range: {part}")
                 return []
         else:
-            # Single year
             try:
                 years.add(int(part))
             except ValueError:
@@ -793,7 +869,6 @@ def extract_dois_from_papers(papers: List[Dict]) -> List[str]:
     for paper in papers:
         doi = paper.get('doi', '')
         if doi:
-            # Clean DOI (remove URL prefix if present) but preserve case
             doi = doi.replace('https://doi.org/', '').replace('http://doi.org/', '')
             dois.append(doi)
     return dois
@@ -816,7 +891,6 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
         doi = paper.get('doi', '').replace('https://doi.org/', '').replace('http://doi.org/', '')
         
         if not doi:
-            # No DOI - keep with OpenAlex year but mark as unvalidated
             validation_stats['no_doi'] += 1
             paper['_validation'] = {
                 'source': 'openalex_only',
@@ -842,10 +916,16 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
                 'year': crossref_year,
                 'original_year': paper.get('publication_year'),
                 'kept': crossref_year in target_years,
-                'crossref_doi': crossref_data[doi_lower]['doi']  # Store original case
+                'crossref_doi': crossref_data[doi_lower]['doi'],
+                'first_date': f"{crossref_data[doi_lower]['year']}-{crossref_data[doi_lower]['month']:02d}-{crossref_data[doi_lower]['day']:02d}",
+                'final_date': paper.get('publication_date', ''),
+                'crossref_publisher': crossref_data[doi_lower].get('publisher', ''),
+                'issn_print': crossref_data[doi_lower].get('issn_print', ''),
+                'issn_electronic': crossref_data[doi_lower].get('issn_electronic', ''),
+                'is_referenced_by_count': crossref_data[doi_lower].get('is_referenced_by_count', 0),
+                'references_count': crossref_data[doi_lower].get('references_count', 0)
             }
             
-            # Update publication year with Crossref year
             paper['publication_year'] = crossref_year
             
             if crossref_year in target_years:
@@ -870,11 +950,34 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
     
     return filtered_papers, validation_stats
 
-def enrich_paper_data(paper: Dict) -> Dict:
+def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict:
     """Enrich paper data with additional fields"""
+    doi = paper.get('doi', '').replace('https://doi.org/', '')
+    doi_lower = doi.lower() if doi else ''
+    
+    # Get publisher from OpenAlex (host_organization_name) or from Crossref validation
+    publisher_oa = None
+    primary_location = paper.get('primary_location')
+    if primary_location and isinstance(primary_location, dict):
+        source = primary_location.get('source')
+        if source and isinstance(source, dict):
+            publisher_oa = source.get('host_organization_name') or source.get('publisher')
+    
+    publisher_crossref = None
+    crossref_publisher = None
+    if crossref_data and doi_lower in crossref_data:
+        publisher_crossref = crossref_data[doi_lower].get('publisher')
+    
+    # Get ISSN from Crossref validation
+    issn_print = None
+    issn_electronic = None
+    if crossref_data and doi_lower in crossref_data:
+        issn_print = crossref_data[doi_lower].get('issn_print')
+        issn_electronic = crossref_data[doi_lower].get('issn_electronic')
+    
     enriched = {
         'id': paper.get('id', ''),
-        'doi': paper.get('doi', '').replace('https://doi.org/', ''),
+        'doi': doi,
         'title': paper.get('title', 'No title'),
         'publication_year': paper.get('publication_year'),
         'publication_date': paper.get('publication_date', ''),
@@ -882,10 +985,16 @@ def enrich_paper_data(paper: Dict) -> Dict:
         'referenced_works_count': paper.get('referenced_works_count', len(paper.get('referenced_works', []))),
         'type': paper.get('type', ''),
         'is_oa': paper.get('open_access', {}).get('is_oa', False),
-        'validation': paper.get('_validation', {})
+        'validation': paper.get('_validation', {}),
+        'publisher_oa': publisher_oa,
+        'publisher_crossref': publisher_crossref,
+        'publisher': publisher_crossref or publisher_oa or 'Unknown',
+        'issn_print': issn_print,
+        'issn_electronic': issn_electronic,
+        'is_referenced_by_count': paper.get('_validation', {}).get('is_referenced_by_count', 0) if paper.get('_validation') else 0,
+        'references_count': paper.get('_validation', {}).get('references_count', paper.get('referenced_works_count', 0)) if paper.get('_validation') else paper.get('referenced_works_count', 0)
     }
     
-    # Authors
     authorships = paper.get('authorships', [])
     authors = []
     author_affiliations = []
@@ -897,7 +1006,6 @@ def enrich_paper_data(paper: Dict) -> Dict:
             if author_name:
                 authors.append(author_name)
                 
-                # Get affiliations for collaboration analysis
                 institutions = authorship.get('institutions', [])
                 for inst in institutions:
                     if inst and inst.get('country_code'):
@@ -910,21 +1018,16 @@ def enrich_paper_data(paper: Dict) -> Dict:
     enriched['author_countries'] = list(author_countries)
     enriched['affiliations'] = list(set(author_affiliations))
     
-    # Journal and publisher - FIXED: Handle None source
     primary_location = paper.get('primary_location')
     if primary_location and isinstance(primary_location, dict):
         source = primary_location.get('source')
         if source and isinstance(source, dict):
             enriched['journal'] = source.get('display_name', 'Unknown')
-            enriched['publisher'] = source.get('publisher', 'Unknown')
         else:
             enriched['journal'] = 'Unknown'
-            enriched['publisher'] = 'Unknown'
     else:
         enriched['journal'] = 'Unknown'
-        enriched['publisher'] = 'Unknown'
     
-    # Determine collaboration type
     inst_count = len(set(author_affiliations))
     country_count = len(author_countries)
     
@@ -949,28 +1052,23 @@ def add_to_recent_institutions(inst: Dict):
     """Add institution to recent list"""
     recent = st.session_state['recent_institutions']
     
-    # Check if already exists
     for i, existing in enumerate(recent):
         if existing['id'] == inst['id']:
-            # Move to front
             recent.pop(i)
             recent.insert(0, inst)
             break
     else:
-        # Add new
         recent.insert(0, inst)
     
-    # Keep only last 5
     st.session_state['recent_institutions'] = recent[:5]
 
 # ============================================================================
 # ANALYSIS FUNCTIONS
 # ============================================================================
 
-def analyze_papers(papers: List[Dict]) -> Dict:
+def analyze_papers(papers: List[Dict], crossref_data: Optional[Dict] = None) -> Dict:
     """Perform comprehensive analysis on papers"""
     if not papers:
-        # Return empty results if no papers
         return {
             'total_papers': 0,
             'total_citations': 0,
@@ -987,22 +1085,19 @@ def analyze_papers(papers: List[Dict]) -> Dict:
             'enriched_papers': []
         }
     
-    enriched_papers = [enrich_paper_data(p) for p in papers if p]  # Filter out None papers
+    enriched_papers = [enrich_paper_data(p, crossref_data) for p in papers if p]
     
-    # Basic stats
     total_papers = len(enriched_papers)
     total_citations = sum(p['cited_by_count'] for p in enriched_papers)
     
-    # Yearly distribution
     yearly_papers = defaultdict(int)
     yearly_citations = defaultdict(int)
     for p in enriched_papers:
         year = p['publication_year']
-        if year:  # Only process if year exists
+        if year:
             yearly_papers[year] += 1
             yearly_citations[year] += p['cited_by_count']
     
-    # Authors analysis
     all_authors = []
     for p in enriched_papers:
         all_authors.extend(p.get('authors', []))
@@ -1010,15 +1105,12 @@ def analyze_papers(papers: List[Dict]) -> Dict:
     author_counts = Counter(all_authors)
     top_authors = author_counts.most_common(20)
     
-    # Journals analysis
     journal_counts = Counter(p.get('journal', 'Unknown') for p in enriched_papers)
     top_journals = journal_counts.most_common(20)
     
-    # Publishers analysis
     publisher_counts = Counter(p.get('publisher', 'Unknown') for p in enriched_papers if p.get('publisher'))
     top_publishers = publisher_counts.most_common(20)
     
-    # Citation distribution
     citations = [p['cited_by_count'] for p in enriched_papers]
     citation_ranges = {
         '0': sum(1 for c in citations if c == 0),
@@ -1030,10 +1122,8 @@ def analyze_papers(papers: List[Dict]) -> Dict:
         '100+': sum(1 for c in citations if c > 100)
     }
     
-    # Top cited papers
     top_cited = sorted(enriched_papers, key=lambda x: x.get('cited_by_count', 0), reverse=True)[:20]
     
-    # Top papers by citations per year
     current_year = datetime.now().year
     for p in enriched_papers:
         if p.get('publication_year'):
@@ -1045,10 +1135,8 @@ def analyze_papers(papers: List[Dict]) -> Dict:
     
     top_cpy = sorted(enriched_papers, key=lambda x: x.get('citations_per_year', 0), reverse=True)[:20]
     
-    # Collaboration analysis
     collab_types = Counter(p.get('collaboration_type', 'Unknown') for p in enriched_papers)
     
-    # Yearly collaboration breakdown
     yearly_collab = defaultdict(lambda: defaultdict(int))
     for p in enriched_papers:
         year = p.get('publication_year')
@@ -1083,13 +1171,11 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
             MAX_PAGES
         )
         
-        # Step 1: Fetch from OpenAlex with limits
         status_container.text("Loading data from OpenAlex...")
         
         papers_to_fetch = min(total_estimated, MAX_PAPERS_TO_ANALYZE)
         status_container.text(f"Loading up to {papers_to_fetch:,} papers...")
         
-        # Прогресс-бар в контейнере
         progress_bar = progress_container.progress(0)
         
         while cursor and len(all_papers) < MAX_PAPERS_TO_ANALYZE and page < MAX_PAGES:
@@ -1107,17 +1193,15 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
             cursor = next_cursor
             
             status_container.text(f"Loaded {len(all_papers)} papers (page {page}/{total_pages_to_fetch})...")
-            time.sleep(0.1)  # Rate limiting
+            time.sleep(0.1)
         
         status_container.text(f"✅ Loaded {len(all_papers)} papers from OpenAlex")
         progress_bar.progress(0.4)
         
-        # Step 2: Extract DOIs
         dois = extract_dois_from_papers(all_papers)
         status_container.text(f"Found {len(dois)} DOIs for validation")
         progress_bar.progress(0.45)
         
-        # Step 3: Validate with Crossref (synchronous)
         status_container.text("Validating dates with Crossref...")
         
         crossref_data = make_crossref_request_batch(dois)
@@ -1125,7 +1209,6 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         status_container.text(f"✅ Validated {len(crossref_data)} DOIs")
         progress_bar.progress(0.7)
         
-        # Step 4: Filter by actual years
         status_container.text("Filtering by actual publication years...")
         
         filtered_papers, validation_stats = filter_papers_by_actual_years(
@@ -1136,19 +1219,19 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         
         progress_bar.progress(0.8)
         
-        # Step 5: Analyze
         status_container.text("Analyzing data...")
         
-        analysis_results = analyze_papers(filtered_papers)
+        analysis_results = analyze_papers(filtered_papers, crossref_data)
         
         st.session_state['papers_data'] = analysis_results
         st.session_state['validation_stats'] = validation_stats
         st.session_state['analysis_complete'] = True
+        st.session_state['crossref_data'] = crossref_data
         
         progress_bar.progress(1.0)
         status_container.text("✅ Analysis complete!")
         
-        time.sleep(1)  # Даем увидеть завершение
+        time.sleep(1)
         
         return True
         
@@ -1161,7 +1244,7 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
 # PLOTTING FUNCTIONS (PLOTLY)
 # ============================================================================
 
-def plot_yearly_publications(yearly_data: Dict[int, int], colors: Dict):
+def plot_yearly_publications(yearly_data: Dict[int, int], colors: Dict, color_scale: str):
     """Plot yearly publications"""
     years = sorted(yearly_data.keys())
     counts = [yearly_data[y] for y in years]
@@ -1182,13 +1265,23 @@ def plot_yearly_publications(yearly_data: Dict[int, int], colors: Dict):
         yaxis_title='Number of Publications',
         template='plotly_white',
         hovermode='x',
-        showlegend=False
+        showlegend=False,
+        font=dict(family='serif', size=10),
+        title_font=dict(family='serif', size=12, weight='bold'),
+        xaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        ),
+        yaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        )
     )
     
     fig.update_xaxes(tickangle=45)
     return fig
 
-def plot_yearly_citations(yearly_citations: Dict[int, int], colors: Dict):
+def plot_yearly_citations(yearly_citations: Dict[int, int], colors: Dict, color_scale: str):
     """Plot yearly citations"""
     years = sorted(yearly_citations.keys())
     citations = [yearly_citations[y] for y in years]
@@ -1209,13 +1302,23 @@ def plot_yearly_citations(yearly_citations: Dict[int, int], colors: Dict):
         yaxis_title='Total Citations',
         template='plotly_white',
         hovermode='x',
-        showlegend=False
+        showlegend=False,
+        font=dict(family='serif', size=10),
+        title_font=dict(family='serif', size=12, weight='bold'),
+        xaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        ),
+        yaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        )
     )
     
     fig.update_xaxes(tickangle=45)
     return fig
 
-def plot_top_authors(authors_data: List[Tuple[str, int]], colors: Dict):
+def plot_top_authors(authors_data: List[Tuple[str, int]], colors: Dict, color_scale: str):
     """Plot top authors"""
     authors = [a[0][:30] + '...' if len(a[0]) > 30 else a[0] for a in authors_data[:15]]
     counts = [a[1] for a in authors_data[:15]]
@@ -1236,12 +1339,22 @@ def plot_top_authors(authors_data: List[Tuple[str, int]], colors: Dict):
         yaxis_title='Author',
         template='plotly_white',
         height=500,
-        showlegend=False
+        showlegend=False,
+        font=dict(family='serif', size=10),
+        title_font=dict(family='serif', size=12, weight='bold'),
+        xaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        ),
+        yaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        )
     )
     
     return fig
 
-def plot_top_journals(journals_data: List[Tuple[str, int]], colors: Dict):
+def plot_top_journals(journals_data: List[Tuple[str, int]], colors: Dict, color_scale: str):
     """Plot top journals"""
     journals = [j[0][:40] + '...' if len(j[0]) > 40 else j[0] for j in journals_data[:15]]
     counts = [j[1] for j in journals_data[:15]]
@@ -1262,12 +1375,22 @@ def plot_top_journals(journals_data: List[Tuple[str, int]], colors: Dict):
         yaxis_title='Journal',
         template='plotly_white',
         height=500,
-        showlegend=False
+        showlegend=False,
+        font=dict(family='serif', size=10),
+        title_font=dict(family='serif', size=12, weight='bold'),
+        xaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        ),
+        yaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        )
     )
     
     return fig
 
-def plot_top_publishers(publishers_data: List[Tuple[str, int]], colors: Dict):
+def plot_top_publishers(publishers_data: List[Tuple[str, int]], colors: Dict, color_scale: str):
     """Plot top publishers"""
     publishers = [p[0][:30] + '...' if len(p[0]) > 30 else p[0] for p in publishers_data[:15]]
     counts = [p[1] for p in publishers_data[:15]]
@@ -1285,12 +1408,14 @@ def plot_top_publishers(publishers_data: List[Tuple[str, int]], colors: Dict):
     fig.update_layout(
         title='Top Publishers Distribution',
         template='plotly_white',
-        height=500
+        height=500,
+        font=dict(family='serif', size=10),
+        title_font=dict(family='serif', size=12, weight='bold')
     )
     
     return fig
 
-def plot_citation_distribution(distribution: Dict[str, int], colors: Dict):
+def plot_citation_distribution(distribution: Dict[str, int], colors: Dict, color_scale: str):
     """Plot citation distribution"""
     categories = list(distribution.keys())
     counts = list(distribution.values())
@@ -1309,12 +1434,22 @@ def plot_citation_distribution(distribution: Dict[str, int], colors: Dict):
         xaxis_title='Citation Range',
         yaxis_title='Number of Papers',
         template='plotly_white',
-        hovermode='x'
+        hovermode='x',
+        font=dict(family='serif', size=10),
+        title_font=dict(family='serif', size=12, weight='bold'),
+        xaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        ),
+        yaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        )
     )
     
     return fig
 
-def plot_collaboration_types(collab_data: Dict[str, int], colors: Dict):
+def plot_collaboration_types(collab_data: Dict[str, int], colors: Dict, color_scale: str):
     """Plot collaboration types"""
     labels = list(collab_data.keys())
     values = list(collab_data.values())
@@ -1337,12 +1472,14 @@ def plot_collaboration_types(collab_data: Dict[str, int], colors: Dict):
     fig.update_layout(
         title='Collaboration Types',
         template='plotly_white',
-        height=400
+        height=400,
+        font=dict(family='serif', size=10),
+        title_font=dict(family='serif', size=12, weight='bold')
     )
     
     return fig
 
-def plot_yearly_collaboration(yearly_collab: Dict, colors: Dict):
+def plot_yearly_collaboration(yearly_collab: Dict, colors: Dict, color_scale: str):
     """Plot yearly collaboration breakdown"""
     years = sorted(yearly_collab.keys())
     
@@ -1385,16 +1522,29 @@ def plot_yearly_collaboration(yearly_collab: Dict, colors: Dict):
         yaxis_title='Number of Publications',
         barmode='stack',
         template='plotly_white',
-        hovermode='x'
+        hovermode='x',
+        font=dict(family='serif', size=10),
+        title_font=dict(family='serif', size=12, weight='bold'),
+        xaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        ),
+        yaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        ),
+        legend=dict(
+            font=dict(family='serif', size=10)
+        )
     )
     
     fig.update_xaxes(tickangle=45)
     return fig
 
-def plot_citations_vs_references(papers: List[Dict], colors: Dict):
+def plot_citations_vs_references(papers: List[Dict], colors: Dict, color_scale: str):
     """Plot citations vs references scatter with real reference counts"""
     citations = [p['cited_by_count'] for p in papers]
-    references = [p.get('referenced_works_count', 0) for p in papers]
+    references = [p.get('references_count', 0) for p in papers]
     years = [p['publication_year'] for p in papers]
     
     fig = go.Figure()
@@ -1406,9 +1556,13 @@ def plot_citations_vs_references(papers: List[Dict], colors: Dict):
         marker=dict(
             size=8,
             color=years,
-            colorscale='Viridis',
+            colorscale=color_scale,
             showscale=True,
-            colorbar=dict(title='Year'),
+            colorbar=dict(
+                title='Year',
+                title_font=dict(family='serif', size=10),
+                tickfont=dict(family='serif', size=9)
+            ),
             line=dict(width=1, color='white')
         ),
         text=[p['title'][:50] + '...' for p in papers],
@@ -1420,7 +1574,17 @@ def plot_citations_vs_references(papers: List[Dict], colors: Dict):
         xaxis_title='Number of References',
         yaxis_title='Number of Citations',
         template='plotly_white',
-        height=500
+        height=500,
+        font=dict(family='serif', size=10),
+        title_font=dict(family='serif', size=12, weight='bold'),
+        xaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        ),
+        yaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        )
     )
     
     return fig
@@ -1443,12 +1607,11 @@ def plot_top_cited_table(papers: List[Dict], title: str, colors: Dict):
     
     return df
 
-def create_validation_summary(validation_stats: Dict, colors: Dict):
+def create_validation_summary(validation_stats: Dict, colors: Dict, color_scale: str):
     """Create validation summary visualization"""
     if not validation_stats:
         return None
     
-    # Create pie chart for validation results
     labels = ['Validated & Kept', 'Kept (No DOI/Not Found)', 'Rejected (Year Mismatch)']
     values = [
         validation_stats.get('validated', 0),
@@ -1468,7 +1631,9 @@ def create_validation_summary(validation_stats: Dict, colors: Dict):
     fig.update_layout(
         title='DOI Validation Summary',
         template='plotly_white',
-        height=400
+        height=400,
+        font=dict(family='serif', size=10),
+        title_font=dict(family='serif', size=12, weight='bold')
     )
     
     return fig
@@ -1478,16 +1643,13 @@ def create_validation_summary(validation_stats: Dict, colors: Dict):
 # ============================================================================
 
 def main():
-    # Sidebar for settings
     with st.sidebar:
         st.markdown(f"<h2 style='color: {colors['primary']};'>🎨 Settings</h2>", unsafe_allow_html=True)
         
-        # Theme selector
         st.markdown("**Color Theme:**")
         
-        # Display color palette options in a grid
         cols = st.columns(4)
-        for i, palette in enumerate(UI_COLOR_PALETTES[:8]):  # Show first 8
+        for i, palette in enumerate(UI_COLOR_PALETTES[:8]):
             with cols[i % 4]:
                 if st.button(
                     "●", 
@@ -1498,15 +1660,21 @@ def main():
                     st.session_state['ui_palette'] = palette
                     st.rerun()
                 
-                # Show color indicator
                 st.markdown(
                     f'<div style="width:100%; height:5px; background: linear-gradient(90deg, {palette["gradient_start"]}, {palette["gradient_end"]}); border-radius:3px; margin-bottom:5px;"></div>',
                     unsafe_allow_html=True
                 )
         
+        st.markdown("**Color Scale for Plots:**")
+        selected_color_scale = st.selectbox(
+            "Select color ramp",
+            options=COLOR_SCALES,
+            index=COLOR_SCALES.index(st.session_state['color_scale']) if st.session_state['color_scale'] in COLOR_SCALES else 0
+        )
+        st.session_state['color_scale'] = selected_color_scale
+        
         st.markdown("---")
         
-        # Recent institutions
         if st.session_state['recent_institutions']:
             st.markdown("**Recent Institutions:**")
             for inst in st.session_state['recent_institutions']:
@@ -1524,13 +1692,11 @@ def main():
                     st.rerun()
             st.markdown("---")
         
-        # API Status
         st.markdown(f"**API Status:**")
         st.markdown(f"✅ OpenAlex")
         st.markdown(f"✅ Crossref")
         st.markdown("---")
         
-        # About
         st.markdown("**About:**")
         st.markdown("""
         University & Institute publication analysis using OpenAlex with date validation via Crossref.
@@ -1540,7 +1706,6 @@ def main():
         - Crossref: Date validation
         """)
         
-        # Rate limits info
         with st.expander("ℹ️ Rate Limits & Limits"):
             st.markdown("""
             - OpenAlex: 10 requests/sec
@@ -1551,13 +1716,11 @@ def main():
             Analysis may take time for large datasets.
             """)
     
-    # Main content
     st.markdown(f'<h1 class="main-header">🏛️ UnInst Analytics</h1>', unsafe_allow_html=True)
     
-    # Step indicator - ALWAYS SHOWN
-    steps = ["Institution Search", "Period Selection", "Results"]  # Убрали "Data Collection"
+    steps = ["Institution Search", "Period Selection", "Results"]
     current_step = st.session_state['step'] - 1
-    if current_step >= 2:  # Корректировка для 3-го шага (теперь Results это step 3)
+    if current_step >= 2:
         current_step = 2 if st.session_state['step'] == 3 else st.session_state['step'] - 1
     
     step_html = '<div class="step-container">'
@@ -1573,10 +1736,6 @@ def main():
     step_html += '</div>'
     
     st.markdown(step_html, unsafe_allow_html=True)
-    
-    # ========================================================================
-    # STEP 1: INSTITUTION SEARCH
-    # ========================================================================
     
     if st.session_state['step'] == 1:
         st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -1605,7 +1764,6 @@ def main():
         if search_clicked and query:
             with st.spinner("Searching for institution..."):
                 if is_ror_id(query):
-                    # Search by ROR
                     inst = get_institution_by_ror(query)
                     if inst:
                         st.session_state['institution_id'] = inst['id']
@@ -1613,7 +1771,6 @@ def main():
                         st.session_state['institution_ror'] = inst['ror']
                         st.session_state['institution_country'] = inst.get('country', 'N/A')
                         
-                        # Add to recent
                         add_to_recent_institutions({
                             'id': inst['id'],
                             'name': inst['display_name'],
@@ -1631,7 +1788,6 @@ def main():
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        # Store in session for next step
                         st.session_state['search_results'] = [inst]
                     else:
                         st.markdown(f"""
@@ -1640,7 +1796,6 @@ def main():
                         </div>
                         """, unsafe_allow_html=True)
                 else:
-                    # Search by name
                     results = search_institution(query)
                     st.session_state['search_results'] = results
                     
@@ -1659,7 +1814,6 @@ def main():
                                     st.session_state['institution_ror'] = inst['ror']
                                     st.session_state['institution_country'] = inst.get('country', 'N/A')
                                     
-                                    # Add to recent
                                     add_to_recent_institutions({
                                         'id': inst['id'],
                                         'name': inst['display_name'],
@@ -1682,7 +1836,6 @@ def main():
                         </div>
                         """, unsafe_allow_html=True)
         
-        # Navigation buttons
         if st.session_state['institution_id']:
             col1, col2 = st.columns(2)
             with col1:
@@ -1696,10 +1849,6 @@ def main():
         
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ========================================================================
-    # STEP 2: YEAR SELECTION (С ЗАПУСКОМ АНАЛИЗА)
-    # ========================================================================
-    
     elif st.session_state['step'] == 2:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("### 📅 Step 2: Analysis Period")
@@ -1723,7 +1872,6 @@ def main():
         *Note: Period limited to 30 years for performance*
         """)
         
-        # Use on_change to update session state
         def on_year_input_change():
             st.session_state['year_input_text'] = st.session_state['year_input_widget']
         
@@ -1747,7 +1895,6 @@ def main():
                 if year_input:
                     years = parse_year_input(year_input)
                     if years:
-                        # Validate years
                         is_valid, message = validate_year_range(years)
                         if not is_valid:
                             st.markdown(f"""
@@ -1759,14 +1906,12 @@ def main():
                             st.session_state['year_input_text'] = year_input
                             
                             with st.spinner("Checking data availability..."):
-                                # Get total count with expanded range
                                 total = get_total_papers_count(st.session_state['institution_id'], years)
                                 
                                 st.session_state['years_range'] = years
                                 st.session_state['total_papers'] = total
                                 
                                 if total > 0:
-                                    # Clear any previous error/success messages
                                     st.rerun()
                     else:
                         st.markdown("""
@@ -1781,11 +1926,9 @@ def main():
                     </div>
                     """, unsafe_allow_html=True)
         
-        # Show results and Start Analysis button if we have data
         if st.session_state['years_range'] and st.session_state['total_papers'] > 0:
             expanded = expand_year_range(st.session_state['years_range'])
             
-            # Show warning for large datasets
             if st.session_state['total_papers'] > WARN_PAPERS_THRESHOLD:
                 st.markdown(f"""
                 <div class="warning-box">
@@ -1803,17 +1946,13 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
             
-            # Add Start Analysis button (уже есть, но оставляем для ясности)
             col1, col2, col3 = st.columns([1, 1, 2])
             with col2:
                 if st.button("▶️ Start Analysis", type="primary", use_container_width=True, key="start_analysis_main"):
-                    # Запускаем анализ напрямую
                     with st.spinner("Starting analysis..."):
-                        # Создаем контейнер для прогресса
                         progress_container = st.empty()
                         status_container = st.empty()
                         
-                        # Запускаем сбор и анализ данных
                         success = run_analysis_with_progress(
                             st.session_state['institution_id'],
                             st.session_state['years_range'],
@@ -1828,27 +1967,22 @@ def main():
         
         st.markdown('</div>', unsafe_allow_html=True)
     
-    
-    # ========================================================================
-    # STEP 3: RESULTS
-    # ========================================================================
-    
     elif st.session_state['step'] == 4 and st.session_state['analysis_complete']:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("### 📊 Step 4: Analysis Results")
         
-        # Navigation buttons
         col1, col2, col3 = st.columns([1, 1, 2])
         
         with col1:
             if st.button("← New Search", use_container_width=True):
-                # Clear session but keep theme and recent
                 palette = st.session_state['ui_palette']
+                color_scale = st.session_state['color_scale']
                 recent = st.session_state['recent_institutions']
                 for key in list(st.session_state.keys()):
-                    if key not in ['ui_palette', 'previous_palette', 'recent_institutions']:
+                    if key not in ['ui_palette', 'color_scale', 'previous_palette', 'recent_institutions']:
                         del st.session_state[key]
                 st.session_state['ui_palette'] = palette
+                st.session_state['color_scale'] = color_scale
                 st.session_state['recent_institutions'] = recent
                 st.session_state['step'] = 1
                 st.rerun()
@@ -1857,9 +1991,9 @@ def main():
             if st.button("🔄 Refresh", use_container_width=True):
                 st.rerun()
         
-        # Summary metrics
         data = st.session_state['papers_data']
         validation = st.session_state['validation_stats']
+        crossref_data = st.session_state.get('crossref_data', {})
         
         col1, col2, col3, col4 = st.columns(4)
         
@@ -1896,7 +2030,6 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         
-        # Validation summary
         st.markdown('<div class="info-box">', unsafe_allow_html=True)
         st.markdown(f"""
         **📊 Date Validation Statistics (Crossref):**
@@ -1908,15 +2041,13 @@ def main():
         """)
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Validation visualization
         if validation:
-            fig_val = create_validation_summary(validation, colors)
+            fig_val = create_validation_summary(validation, colors, st.session_state['color_scale'])
             if fig_val:
                 st.plotly_chart(fig_val, use_container_width=True)
         
         st.markdown("---")
         
-        # Tabs for different analyses
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "📈 Years", "👥 Authors", "📚 Journals", "🏢 Publishers", "📊 Citations", "🌍 Collaborations"
         ])
@@ -1927,25 +2058,23 @@ def main():
             col1, col2 = st.columns(2)
             
             with col1:
-                fig_yearly = plot_yearly_publications(data['yearly_papers'], colors)
+                fig_yearly = plot_yearly_publications(data['yearly_papers'], colors, st.session_state['color_scale'])
                 st.plotly_chart(fig_yearly, use_container_width=True)
             
             with col2:
-                fig_cit_year = plot_yearly_citations(data['yearly_citations'], colors)
+                fig_cit_year = plot_yearly_citations(data['yearly_citations'], colors, st.session_state['color_scale'])
                 st.plotly_chart(fig_cit_year, use_container_width=True)
             
-            # Citations vs References
-            fig_scatter = plot_citations_vs_references(data['enriched_papers'], colors)
+            fig_scatter = plot_citations_vs_references(data['enriched_papers'], colors, st.session_state['color_scale'])
             st.plotly_chart(fig_scatter, use_container_width=True)
         
         with tab2:
             st.markdown("### Top 20 Authors")
             
             if data['top_authors']:
-                fig_authors = plot_top_authors(data['top_authors'], colors)
+                fig_authors = plot_top_authors(data['top_authors'], colors, st.session_state['color_scale'])
                 st.plotly_chart(fig_authors, use_container_width=True)
                 
-                # Table
                 df_authors = pd.DataFrame(data['top_authors'], columns=['Author', 'Publications'])
                 st.dataframe(df_authors, use_container_width=True)
             else:
@@ -1958,7 +2087,7 @@ def main():
             
             with col1:
                 if data['top_journals']:
-                    fig_journals = plot_top_journals(data['top_journals'], colors)
+                    fig_journals = plot_top_journals(data['top_journals'], colors, st.session_state['color_scale'])
                     st.plotly_chart(fig_journals, use_container_width=True)
             
             with col2:
@@ -1973,7 +2102,7 @@ def main():
             
             with col1:
                 if data['top_publishers']:
-                    fig_publishers = plot_top_publishers(data['top_publishers'], colors)
+                    fig_publishers = plot_top_publishers(data['top_publishers'], colors, st.session_state['color_scale'])
                     st.plotly_chart(fig_publishers, use_container_width=True)
             
             with col2:
@@ -1984,8 +2113,7 @@ def main():
         with tab5:
             st.markdown("### Citation Analysis")
             
-            # Citation distribution
-            fig_cit_dist = plot_citation_distribution(data['citation_distribution'], colors)
+            fig_cit_dist = plot_citation_distribution(data['citation_distribution'], colors, st.session_state['color_scale'])
             st.plotly_chart(fig_cit_dist, use_container_width=True)
             
             st.markdown("### Top 20 Most Cited Papers")
@@ -2004,7 +2132,7 @@ def main():
             col1, col2 = st.columns(2)
             
             with col1:
-                fig_collab = plot_collaboration_types(data['collaboration_types'], colors)
+                fig_collab = plot_collaboration_types(data['collaboration_types'], colors, st.session_state['color_scale'])
                 st.plotly_chart(fig_collab, use_container_width=True)
             
             with col2:
@@ -2014,34 +2142,31 @@ def main():
                 )
                 st.dataframe(df_collab, use_container_width=True)
             
-            # Yearly collaboration
-            fig_yearly_collab = plot_yearly_collaboration(data['yearly_collaboration'], colors)
+            fig_yearly_collab = plot_yearly_collaboration(data['yearly_collaboration'], colors, st.session_state['color_scale'])
             st.plotly_chart(fig_yearly_collab, use_container_width=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Export section
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("### 📥 Export Data")
         
         col1, col2, col3 = st.columns(3)
         
-        # Prepare export data
         export_df = pd.DataFrame([
             {
-                'Title': p['title'],
-                'Authors': ', '.join(p['authors']),
-                'Year': p['publication_year'],
-                'Journal': p['journal'],
-                'Publisher': p['publisher'],
-                'Citations': p['cited_by_count'],
-                'References': p.get('referenced_works_count', 0),
-                'Citations per Year': p.get('citations_per_year', 0),
-                'Type': p['type'],
                 'DOI': p['doi'],
-                'Collaboration Type': p['collaboration_type'],
-                'Validation Source': p['validation'].get('source', 'N/A'),
-                'Validation Year': p['validation'].get('year', 'N/A')
+                'First Date': p['validation'].get('first_date', p.get('publication_date', '')),
+                'Final Date': p['validation'].get('final_date', p.get('publication_date', '')),
+                'Authors': '; '.join(p['authors']),
+                'Title': p['title'],
+                'Journal': p['journal'],
+                'ISSN (Print)': p.get('issn_print', ''),
+                'ISSN (Electronic)': p.get('issn_electronic', ''),
+                'Publisher': p.get('publisher', 'Unknown'),
+                'References': p.get('references_count', 0),
+                'Citations (CR)': p.get('is_referenced_by_count', 0),
+                'Citations (OA)': p.get('cited_by_count', 0),
+                'Collaboration Type': p.get('collaboration_type', 'Unknown')
             }
             for p in data['enriched_papers']
         ])
@@ -2057,13 +2182,10 @@ def main():
             )
         
         with col2:
-            # Excel export
-            import io
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 export_df.to_excel(writer, sheet_name='All Papers', index=False)
                 
-                # Add summary sheet
                 summary_data = {
                     'Metric': ['Institution', 'ROR', 'Country', 'Total Papers', 'Total Citations', 
                               'Average Citations', 'Validated DOIs', 'Analysis Date'],
@@ -2080,10 +2202,8 @@ def main():
                 }
                 pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
                 
-                # Add validation stats
                 pd.DataFrame([validation]).to_excel(writer, sheet_name='Validation', index=False)
                 
-                # Add collaboration stats
                 collab_df = pd.DataFrame(
                     list(data['collaboration_types'].items()),
                     columns=['Collaboration Type', 'Count']
@@ -2099,7 +2219,6 @@ def main():
             )
         
         with col3:
-            # JSON export
             json_data = json.dumps({
                 'institution': {
                     'name': st.session_state['institution_name'],
@@ -2120,10 +2239,10 @@ def main():
                         'authors': p['authors'],
                         'year': p['publication_year'],
                         'citations': p['cited_by_count'],
-                        'references': p.get('referenced_works_count', 0),
+                        'references': p.get('references_count', 0),
                         'doi': p['doi']
                     }
-                    for p in data['enriched_papers'][:100]  # Limit for JSON
+                    for p in data['enriched_papers'][:100]
                 ]
             }, indent=2, ensure_ascii=False).encode('utf-8')
             
@@ -2137,7 +2256,6 @@ def main():
         
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # Footer
     st.markdown(f"""
     <div class="footer">
         <p>🏛️ UnInst Analytics | Data: OpenAlex, Crossref | Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
