@@ -1482,10 +1482,10 @@ def main():
             status = ""
         
         step_html += f'''
-        <div class="step {status}">
-            <div class="step-number">{i+1}</div>
-            <div>{step_name}</div>
-        </div>
+    <div class="step {status}">
+        <div class="step-number">{i+1}</div>
+        <div>{step_name}</div>
+    </div>
         '''
     step_html += '</div>'
     
@@ -2155,5 +2155,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
