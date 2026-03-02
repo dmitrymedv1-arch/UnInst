@@ -694,12 +694,10 @@ def load_scopus_database() -> Dict[str, Dict]:
 if 'wos_data' not in st.session_state:
     wos_norm = load_wos_database()
     st.session_state['wos_data'] = wos_norm
-}
 
 if 'scopus_data' not in st.session_state:
     scopus_norm = load_scopus_database()
     st.session_state['scopus_data'] = scopus_norm
-}
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -2933,6 +2931,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
