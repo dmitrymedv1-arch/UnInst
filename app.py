@@ -592,15 +592,39 @@ def normalize_issn(issn: Any) -> Optional[str]:
     # Remove hyphens and spaces
     clean = re.sub(r'[\s-]', '', issn_str)
     
-    # Проверяем формат ISSN: 8 символов, последний может быть цифрой или X
-    if re.match(r'^\d{7}[\dX]$', clean):
-        return clean
-    elif re.match(r'^\d{1,7}$', clean):
-        # Дополняем нулями слева до 8 символов
-        clean = clean.zfill(8)
-        return clean
-    elif re.match(r'^\d{7}X$', clean):
-        return clean
+    # If it's all digits or digits with X at the end, pad to 8 digits
+    if re.match(r'^\d{7}[\dX]?$', clean) or re.match(r'^\d{1,7}$', clean):
+        if len(clean) < 8:
+            clean = clean.zfill(8)
+        if len(clean) == 8:
+            return clean
+    
+    return None
+
+def format_issn_with_hyphen(issn: str) -> Optional[str]:
+    """
+    Format ISSN to standard format with hyphen: XXXX-XXXX
+    Handles:
+    - 20734352 -> 2073-4352
+    - 69358 -> 0006-9358 (pad with zeros)
+    - 2073-4352 -> 2073-4352 (already formatted)
+    """
+    if pd.isna(issn) or not issn:
+        return None
+    
+    # Convert to string and remove any whitespace
+    issn_str = str(issn).strip().upper()
+    
+    # Remove existing hyphens first
+    clean = re.sub(r'[\s-]', '', issn_str)
+    
+    # If it's all digits or digits with X, pad to 8 characters
+    if re.match(r'^\d+$', clean) or re.match(r'^\d+X$', clean):
+        if len(clean) < 8:
+            clean = clean.zfill(8)
+        if len(clean) == 8:
+            # Insert hyphen after 4th character
+            return f"{clean[:4]}-{clean[4:]}"
     
     return None
 
@@ -621,35 +645,37 @@ def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
             return {}, {}
         
         issn_to_data = {}
-        normalized_to_data = {}
+        formatted_to_data = {}  # Теперь храним отформатированные ISSN (с дефисом)
         
         for _, row in df.iterrows():
             issn = str(row.get('ISSN', '')).strip()
             if pd.notna(issn) and issn and issn.lower() != 'nan':
                 if_value = row.get('IF', 0)
                 quartile = row.get('Quartile', '')
+                journal_title = row.get('Journal title', row.get('Title', ''))  # Пробуем разные названия колонок
                 
                 # Сохраняем оригинальный ISSN (с дефисом)
                 issn_to_data[issn] = {
                     'if': if_value,
                     'quartile': quartile,
                     'database': 'WoS',
-                    'title': row.get('Journal title', '')  # если есть колонка с названием журнала
+                    'title': journal_title
                 }
                 
-                # Нормализуем ISSN (убираем дефисы)
-                norm_issn = normalize_issn(issn)
-                if norm_issn:
-                    normalized_to_data[norm_issn] = {
+                # Форматируем ISSN (на всякий случай, если вдруг в файле без дефиса)
+                formatted_issn = format_issn_with_hyphen(issn)
+                if formatted_issn and formatted_issn != issn:
+                    formatted_to_data[formatted_issn] = {
                         'if': if_value,
                         'quartile': quartile,
                         'database': 'WoS',
-                        'title': row.get('Journal title', '')
+                        'title': journal_title
                     }
         
-        return issn_to_data, normalized_to_data
+        return issn_to_data, formatted_to_data
         
     except Exception as e:
+        print(f"Error loading WoS database: {e}")
         return {}, {}
 
 @st.cache_data(show_spinner="Loading Scopus database...")
@@ -669,35 +695,37 @@ def load_scopus_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
             return {}, {}
         
         issn_to_data = {}
-        normalized_to_data = {}
+        formatted_to_data = {}  # Теперь храним отформатированные ISSN (с дефисом)
         
         for _, row in df.iterrows():
             issn = str(row.get('Print ISSN', '')).strip()
             if pd.notna(issn) and issn and issn.lower() != 'nan':
                 citescore = row.get('CiteScore', 0)
                 quartile = row.get('Quartile', '')
+                source_title = row.get('Source title', row.get('Title', ''))  # Пробуем разные названия колонок
                 
-                # Сохраняем оригинальный ISSN (может быть с дефисом или без)
+                # Сохраняем оригинальный ISSN (как есть из файла)
                 issn_to_data[issn] = {
                     'citescore': citescore,
                     'quartile': quartile,
                     'database': 'Scopus',
-                    'title': row.get('Source title', '')  # если есть колонка с названием журнала
+                    'title': source_title
                 }
                 
-                # Нормализуем ISSN
-                norm_issn = normalize_issn(issn)
-                if norm_issn:
-                    normalized_to_data[norm_issn] = {
+                # Форматируем ISSN в стандартный вид с дефисом
+                formatted_issn = format_issn_with_hyphen(issn)
+                if formatted_issn:
+                    formatted_to_data[formatted_issn] = {
                         'citescore': citescore,
                         'quartile': quartile,
                         'database': 'Scopus',
-                        'title': row.get('Source title', '')
+                        'title': source_title
                     }
         
-        return issn_to_data, normalized_to_data
+        return issn_to_data, formatted_to_data
         
     except Exception as e:
+        print(f"Error loading Scopus database: {e}")
         return {}, {}
 
 # Load databases at startup
@@ -775,34 +803,31 @@ def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional
     wos_info = {'indexed': False, 'if': None, 'quartile': None, 'title': None}
     scopus_info = {'indexed': False, 'citescore': None, 'quartile': None, 'title': None}
     
-    # Collect all ISSNs to check
+    # Collect all ISSNs to check (keep original format with hyphen)
     all_issns = set()
     
-    # Add print and electronic ISSN
-    if issn_print:
-        all_issns.add(issn_print)
-        normalized = normalize_issn(issn_print)
-        if normalized:
-            all_issns.add(normalized)
+    # Добавляем все возможные ISSN в оригинальном формате (с дефисом)
+    if issn_print and issn_print.strip():
+        all_issns.add(issn_print.strip())
     
-    if issn_electronic:
-        all_issns.add(issn_electronic)
-        normalized = normalize_issn(issn_electronic)
-        if normalized:
-            all_issns.add(normalized)
+    if issn_electronic and issn_electronic.strip():
+        all_issns.add(issn_electronic.strip())
     
-    # Add all ISSNs from list
     for issn in issn_list:
-        if issn:
-            all_issns.add(issn)
-            normalized = normalize_issn(issn)
-            if normalized:
-                all_issns.add(normalized)
+        if issn and str(issn).strip():
+            all_issns.add(str(issn).strip())
     
-    # Check WoS database
+    # Также добавляем нормализованные версии для поиска в Scopus (где в файле может быть без дефиса)
+    all_normalized = set()
+    for issn in all_issns:
+        normalized = normalize_issn(issn)
+        if normalized:
+            all_normalized.add(normalized)
+    
+    # Check WoS database - ищем по оригинальным ISSN (с дефисом)
     if st.session_state['wos_data']['issn_map'] or st.session_state['wos_data']['normalized_map']:
+        # Сначала ищем по оригинальным ISSN (с дефисом)
         for issn in all_issns:
-            # Try exact match first
             if issn in st.session_state['wos_data']['issn_map']:
                 data = st.session_state['wos_data']['issn_map'][issn]
                 wos_info = {
@@ -812,23 +837,24 @@ def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional
                     'title': data.get('title')
                 }
                 break
-            
-            # Try normalized match
-            normalized = normalize_issn(issn)
-            if normalized and normalized in st.session_state['wos_data']['normalized_map']:
-                data = st.session_state['wos_data']['normalized_map'][normalized]
-                wos_info = {
-                    'indexed': True,
-                    'if': data.get('if'),
-                    'quartile': data.get('quartile'),
-                    'title': data.get('title')
-                }
-                break
+        
+        # Если не нашли, пробуем по нормализованным (на случай если в файле без дефиса)
+        if not wos_info['indexed']:
+            for norm_issn in all_normalized:
+                if norm_issn in st.session_state['wos_data']['normalized_map']:
+                    data = st.session_state['wos_data']['normalized_map'][norm_issn]
+                    wos_info = {
+                        'indexed': True,
+                        'if': data.get('if'),
+                        'quartile': data.get('quartile'),
+                        'title': data.get('title')
+                    }
+                    break
     
-    # Check Scopus database
+    # Check Scopus database - ищем по оригинальным ISSN (с дефисом)
     if st.session_state['scopus_data']['issn_map'] or st.session_state['scopus_data']['normalized_map']:
+        # Сначала ищем по оригинальным ISSN (как есть из файла CS.xlsx)
         for issn in all_issns:
-            # Try exact match first
             if issn in st.session_state['scopus_data']['issn_map']:
                 data = st.session_state['scopus_data']['issn_map'][issn]
                 scopus_info = {
@@ -838,18 +864,19 @@ def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional
                     'title': data.get('title')
                 }
                 break
-            
-            # Try normalized match
-            normalized = normalize_issn(issn)
-            if normalized and normalized in st.session_state['scopus_data']['normalized_map']:
-                data = st.session_state['scopus_data']['normalized_map'][normalized]
-                scopus_info = {
-                    'indexed': True,
-                    'citescore': data.get('citescore'),
-                    'quartile': data.get('quartile'),
-                    'title': data.get('title')
-                }
-                break
+        
+        # Если не нашли, пробуем по отформатированным (с дефисом)
+        if not scopus_info['indexed']:
+            for issn in all_issns:
+                if issn in st.session_state['scopus_data']['normalized_map']:
+                    data = st.session_state['scopus_data']['normalized_map'][issn]
+                    scopus_info = {
+                        'indexed': True,
+                        'citescore': data.get('citescore'),
+                        'quartile': data.get('quartile'),
+                        'title': data.get('title')
+                    }
+                    break
     
     return wos_info, scopus_info
 
