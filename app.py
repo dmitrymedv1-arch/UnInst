@@ -592,12 +592,15 @@ def normalize_issn(issn: Any) -> Optional[str]:
     # Remove hyphens and spaces
     clean = re.sub(r'[\s-]', '', issn_str)
     
-    # If it's all digits or digits with X at the end, pad to 8 digits
-    if re.match(r'^\d{7}[\dX]?$', clean) or re.match(r'^\d{1,7}$', clean):
-        if len(clean) < 8:
-            clean = clean.zfill(8)
-        if len(clean) == 8:
-            return clean
+    # Проверяем формат ISSN: 8 символов, последний может быть цифрой или X
+    if re.match(r'^\d{7}[\dX]$', clean):
+        return clean
+    elif re.match(r'^\d{1,7}$', clean):
+        # Дополняем нулями слева до 8 символов
+        clean = clean.zfill(8)
+        return clean
+    elif re.match(r'^\d{7}X$', clean):
+        return clean
     
     return None
 
@@ -1262,14 +1265,14 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
     issn_electronic = None
     issn_list = []
     
-    # Priority 1: Get from Crossref validation data (already processed)
+    # Источник 1: Данные из Crossref (уже обработанные)
     if crossref_data and doi_lower in crossref_data:
         issn_print = crossref_data[doi_lower].get('issn_print')
         issn_electronic = crossref_data[doi_lower].get('issn_electronic')
         issn_list = crossref_data[doi_lower].get('issn_list', [])
     
-    # Priority 2: Get from OpenAlex source if Crossref data not available
-    if not issn_print and not issn_electronic:
+    # Источник 2: Если Crossref не дал ISSN, берем из OpenAlex
+    if not issn_list and not issn_print and not issn_electronic:
         primary_location = paper.get('primary_location')
         if primary_location and isinstance(primary_location, dict):
             source = primary_location.get('source')
@@ -1278,13 +1281,42 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
                 oa_issn_list = source.get('issn', [])
                 if oa_issn_list and isinstance(oa_issn_list, list):
                     issn_list = oa_issn_list
-                    # Try to infer print/electronic
-                    if len(issn_list) == 1:
-                        issn_print = issn_list[0]
-                    elif len(issn_list) >= 2:
-                        # Often first is print, second is electronic in OpenAlex too
-                        issn_print = issn_list[0]
-                        issn_electronic = issn_list[1]
+    
+    # Источник 3: Проверяем другие возможные места для ISSN в OpenAlex
+    if not issn_list and not issn_print and not issn_electronic:
+        # Иногда ISSN может быть в других полях
+        if 'issn' in paper:
+            issn_val = paper.get('issn')
+            if issn_val:
+                if isinstance(issn_val, list):
+                    issn_list.extend(issn_val)
+                else:
+                    issn_list.append(issn_val)
+        
+        # Проверяем в библиографической информации
+        biblio = paper.get('biblio', {})
+        if biblio:
+            if 'issn' in biblio:
+                issn_val = biblio.get('issn')
+                if issn_val:
+                    if isinstance(issn_val, list):
+                        issn_list.extend(issn_val)
+                    else:
+                        issn_list.append(issn_val)
+    
+    # Если у нас есть список ISSN, пытаемся определить print и electronic
+    if issn_list and not issn_print and not issn_electronic:
+        # Очищаем список от дубликатов и пустых значений
+        issn_list = [issn for issn in issn_list if issn and str(issn).strip()]
+        issn_list = list(set(issn_list))
+        
+        # Если только один ISSN
+        if len(issn_list) == 1:
+            issn_print = issn_list[0]
+        # Если два и больше, предполагаем что первый - print, второй - electronic
+        elif len(issn_list) >= 2:
+            issn_print = issn_list[0]
+            issn_electronic = issn_list[1]
     
     # Check WoS and Scopus indexing
     wos_info, scopus_info = check_issn_in_databases(issn_print, issn_electronic, issn_list)
@@ -2970,6 +3002,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
