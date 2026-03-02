@@ -605,129 +605,100 @@ def normalize_issn(issn: Any) -> Optional[str]:
     return None
 
 @st.cache_data(show_spinner="Loading WoS database...")
-def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
+def load_wos_database() -> Dict[str, Dict]:
     """
-    Load WoS database from IF.xlsx
+    Загружает базу WoS только с нормализованными ISSN (без дефисов, 8 символов).
+    Возвращает один словарь: normalized_issn → данные журнала
     """
     if not os.path.exists('IF.xlsx'):
-        return {}, {}
-    
+        st.warning("Файл IF.xlsx не найден")
+        return {}
+
     try:
         df = pd.read_excel('IF.xlsx')
         
-        # Проверяем наличие необходимых колонок
         required_cols = ['ISSN', 'IF', 'Quartile']
         if not all(col in df.columns for col in required_cols):
-            return {}, {}
-        
-        issn_to_data = {}
+            st.error("В файле IF.xlsx отсутствуют необходимые столбцы: ISSN, IF, Quartile")
+            return {}
+
         normalized_to_data = {}
-        
+
         for _, row in df.iterrows():
-            issn = str(row.get('ISSN', '')).strip()
-            if pd.notna(issn) and issn and issn.lower() != 'nan':
-                if_value = row.get('IF', 0)
-                quartile = row.get('Quartile', '')
-                
-                # Сохраняем оригинальный ISSN (с дефисом)
-                issn_to_data[issn] = {
-                    'if': if_value,
-                    'quartile': quartile,
-                    'database': 'WoS',
-                    'title': row.get('Journal title', '')  # если есть колонка с названием журнала
-                }
-                
-                # Нормализуем ISSN (убираем дефисы)
-                norm_issn = normalize_issn(issn)
-                if norm_issn:
-                    normalized_to_data[norm_issn] = {
-                        'if': if_value,
-                        'quartile': quartile,
-                        'database': 'WoS',
-                        'title': row.get('Journal title', '')
-                    }
-        
-        return issn_to_data, normalized_to_data
-        
+            issn_raw = str(row.get('ISSN', '')).strip()
+            if not issn_raw or issn_raw.lower() in ('', 'nan'):
+                continue
+
+            norm_issn = normalize_issn(issn_raw)
+            if not norm_issn:
+                continue
+
+            normalized_to_data[norm_issn] = {
+                'if': float(row.get('IF', 0)) if pd.notna(row.get('IF')) else 0.0,
+                'quartile': str(row.get('Quartile', '')).strip(),
+                'database': 'WoS',
+                'title': str(row.get('Journal title', '')).strip() or 'Unknown'
+            }
+
+        st.success(f"WoS: загружено {len(normalized_to_data)} журналов (только нормализованные ISSN)")
+        return normalized_to_data
+
     except Exception as e:
-        return {}, {}
+        st.error(f"Ошибка при чтении IF.xlsx: {str(e)}")
+        return {}
 
 @st.cache_data(show_spinner="Loading Scopus database...")
-def load_scopus_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
+def load_scopus_database() -> Dict[str, Dict]:
     """
-    Load Scopus database from CS.xlsx
+    Загружает базу Scopus только с нормализованными ISSN (без дефисов, 8 символов).
+    Возвращает один словарь: normalized_issn → данные журнала
     """
     if not os.path.exists('CS.xlsx'):
-        return {}, {}
-    
+        st.warning("Файл CS.xlsx не найден")
+        return {}
+
     try:
         df = pd.read_excel('CS.xlsx')
         
-        # Проверяем наличие необходимых колонок
         required_cols = ['Print ISSN', 'CiteScore', 'Quartile']
         if not all(col in df.columns for col in required_cols):
-            return {}, {}
-        
-        issn_to_data = {}
+            st.error("В файле CS.xlsx отсутствуют необходимые столбцы: Print ISSN, CiteScore, Quartile")
+            return {}
+
         normalized_to_data = {}
-        
+
         for _, row in df.iterrows():
-            issn = str(row.get('Print ISSN', '')).strip()
-            if pd.notna(issn) and issn and issn.lower() != 'nan':
-                citescore = row.get('CiteScore', 0)
-                quartile = row.get('Quartile', '')
-                
-                # Сохраняем оригинальный ISSN (может быть с дефисом или без)
-                issn_to_data[issn] = {
-                    'citescore': citescore,
-                    'quartile': quartile,
-                    'database': 'Scopus',
-                    'title': row.get('Source title', '')  # если есть колонка с названием журнала
-                }
-                
-                # Нормализуем ISSN
-                norm_issn = normalize_issn(issn)
-                if norm_issn:
-                    normalized_to_data[norm_issn] = {
-                        'citescore': citescore,
-                        'quartile': quartile,
-                        'database': 'Scopus',
-                        'title': row.get('Source title', '')
-                    }
-        
-        return issn_to_data, normalized_to_data
-        
+            issn_raw = str(row.get('Print ISSN', '')).strip()
+            if not issn_raw or issn_raw.lower() in ('', 'nan'):
+                continue
+
+            norm_issn = normalize_issn(issn_raw)
+            if not norm_issn:
+                continue
+
+            normalized_to_data[norm_issn] = {
+                'citescore': float(row.get('CiteScore', 0)) if pd.notna(row.get('CiteScore')) else 0.0,
+                'quartile': str(row.get('Quartile', '')).strip(),
+                'database': 'Scopus',
+                'title': str(row.get('Source title', '')).strip() or 'Unknown'
+            }
+
+        st.success(f"Scopus: загружено {len(normalized_to_data)} журналов (только нормализованные ISSN)")
+        return normalized_to_data
+
     except Exception as e:
-        return {}, {}
+        st.error(f"Ошибка при чтении CS.xlsx: {str(e)}")
+        return {}
 
 # Load databases at startup
 if 'wos_data' not in st.session_state:
-    wos_issn, wos_norm = load_wos_database()
-    st.session_state['wos_data'] = {
-        'issn_map': wos_issn,
-        'normalized_map': wos_norm
+    wos_norm = load_wos_database()
+    st.session_state['wos_data'] = wos_norm
     }
 
 if 'scopus_data' not in st.session_state:
-    scopus_issn, scopus_norm = load_scopus_database()
-    st.session_state['scopus_data'] = {
-        'issn_map': scopus_issn,
-        'normalized_map': scopus_norm
-    }
-
-# Load databases at startup
-if 'wos_data' not in st.session_state:
-    wos_issn, wos_norm = load_wos_database()
-    st.session_state['wos_data'] = {
-        'issn_map': wos_issn,
-        'normalized_map': wos_norm
-    }
-
-if 'scopus_data' not in st.session_state:
-    scopus_issn, scopus_norm = load_scopus_database()
-    st.session_state['scopus_data'] = {
-        'issn_map': scopus_issn,
-        'normalized_map': scopus_norm
+    scopus_norm = load_scopus_database()
+    st.session_state['scopus_data'] = scopus_norm
     }
 
 # ============================================================================
@@ -767,90 +738,50 @@ def validate_year_range(years: List[int]) -> Tuple[bool, str]:
     return True, "Valid"
 
 def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional[str], 
-                             issn_list: List[str]) -> Tuple[Dict, Dict]:
+                           issn_list: List[str]) -> Tuple[Dict, Dict]:
     """
-    Check if any ISSN matches WoS or Scopus databases.
-    Returns: (wos_info, scopus_info)
+    Проверяет наличие нормализованных ISSN в базах WoS и Scopus.
+    Теперь ищем ТОЛЬКО по нормализованным ключам.
     """
     wos_info = {'indexed': False, 'if': None, 'quartile': None, 'title': None}
     scopus_info = {'indexed': False, 'citescore': None, 'quartile': None, 'title': None}
-    
-    # Collect all ISSNs to check
-    all_issns = set()
-    
-    # Add print and electronic ISSN
-    if issn_print:
-        all_issns.add(issn_print)
-        normalized = normalize_issn(issn_print)
-        if normalized:
-            all_issns.add(normalized)
-    
-    if issn_electronic:
-        all_issns.add(issn_electronic)
-        normalized = normalize_issn(issn_electronic)
-        if normalized:
-            all_issns.add(normalized)
-    
-    # Add all ISSNs from list
-    for issn in issn_list:
-        if issn:
-            all_issns.add(issn)
-            normalized = normalize_issn(issn)
-            if normalized:
-                all_issns.add(normalized)
-    
-    # Check WoS database
-    if st.session_state['wos_data']['issn_map'] or st.session_state['wos_data']['normalized_map']:
-        for issn in all_issns:
-            # Try exact match first
-            if issn in st.session_state['wos_data']['issn_map']:
-                data = st.session_state['wos_data']['issn_map'][issn]
-                wos_info = {
-                    'indexed': True,
-                    'if': data.get('if'),
-                    'quartile': data.get('quartile'),
-                    'title': data.get('title')
-                }
-                break
-            
-            # Try normalized match
-            normalized = normalize_issn(issn)
-            if normalized and normalized in st.session_state['wos_data']['normalized_map']:
-                data = st.session_state['wos_data']['normalized_map'][normalized]
-                wos_info = {
-                    'indexed': True,
-                    'if': data.get('if'),
-                    'quartile': data.get('quartile'),
-                    'title': data.get('title')
-                }
-                break
-    
-    # Check Scopus database
-    if st.session_state['scopus_data']['issn_map'] or st.session_state['scopus_data']['normalized_map']:
-        for issn in all_issns:
-            # Try exact match first
-            if issn in st.session_state['scopus_data']['issn_map']:
-                data = st.session_state['scopus_data']['issn_map'][issn]
-                scopus_info = {
-                    'indexed': True,
-                    'citescore': data.get('citescore'),
-                    'quartile': data.get('quartile'),
-                    'title': data.get('title')
-                }
-                break
-            
-            # Try normalized match
-            normalized = normalize_issn(issn)
-            if normalized and normalized in st.session_state['scopus_data']['normalized_map']:
-                data = st.session_state['scopus_data']['normalized_map'][normalized]
-                scopus_info = {
-                    'indexed': True,
-                    'citescore': data.get('citescore'),
-                    'quartile': data.get('quartile'),
-                    'title': data.get('title')
-                }
-                break
-    
+
+    # Собираем все возможные ISSN и их нормализованные версии
+    candidates = set()
+
+    for issn in [issn_print, issn_electronic] + (issn_list or []):
+        if issn and str(issn).strip():
+            candidates.add(str(issn).strip())
+            norm = normalize_issn(issn)
+            if norm:
+                candidates.add(norm)
+
+    # Ищем в WoS
+    for cand in candidates:
+        norm = normalize_issn(cand)
+        if norm and norm in st.session_state['wos_data']:
+            data = st.session_state['wos_data'][norm]
+            wos_info = {
+                'indexed': True,
+                'if': data.get('if'),
+                'quartile': data.get('quartile'),
+                'title': data.get('title')
+            }
+            break  # нашли — достаточно
+
+    # Ищем в Scopus
+    for cand in candidates:
+        norm = normalize_issn(cand)
+        if norm and norm in st.session_state['scopus_data']:
+            data = st.session_state['scopus_data'][norm]
+            scopus_info = {
+                'indexed': True,
+                'citescore': data.get('citescore'),
+                'quartile': data.get('quartile'),
+                'title': data.get('title')
+            }
+            break  # нашли — достаточно
+
     return wos_info, scopus_info
 
 @retry(
@@ -3002,6 +2933,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
