@@ -21,6 +21,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import warnings
 warnings.filterwarnings('ignore')
 import io
+import os
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -527,6 +528,10 @@ MAX_PAPERS_TO_ANALYZE = 10000  # Maximum papers to process
 MAX_PAGES = 50  # Maximum pages to fetch (200 papers per page)
 WARN_PAPERS_THRESHOLD = 5000  # Show warning above this
 
+# Database files
+WOS_FILE = "IF.xlsx"
+SCOPUS_FILE = "CS.xlsx"
+
 # Recent institutions storage
 if 'recent_institutions' not in st.session_state:
     st.session_state['recent_institutions'] = []
@@ -571,7 +576,177 @@ if 'search_query' not in st.session_state:
     st.session_state['search_query'] = ''
 if 'search_performed' not in st.session_state:
     st.session_state['search_performed'] = False
+
+# ============================================================================
+# DATABASE LOADING AND CACHING
+# ============================================================================
+
+@st.cache_data(show_spinner="Loading WoS database...")
+def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
+    """
+    Load WoS database from IF.xlsx and create search indices.
+    Returns: (issn_to_data, normalized_issn_to_data)
+    """
+    if not os.path.exists(WOS_FILE):
+        st.warning(f"WoS database file {WOS_FILE} not found. WoS filtering will be disabled.")
+        return {}, {}
     
+    try:
+        df = pd.read_excel(WOS_FILE)
+        
+        # Check required columns
+        required_cols = ['Name', 'ISSN', 'eISSN', 'IF', 'Quartile']
+        if not all(col in df.columns for col in required_cols):
+            st.warning("WoS database missing required columns. WoS filtering will be disabled.")
+            return {}, {}
+        
+        issn_to_data = {}
+        normalized_to_data = {}
+        
+        for _, row in df.iterrows():
+            title = row.get('Name', '')
+            if_value = row.get('IF', 0)
+            quartile = row.get('Quartile', '')
+            
+            # Process ISSN
+            issn_raw = row.get('ISSN', '')
+            eissn_raw = row.get('eISSN', '')
+            
+            # Normalize and store both ISSN and eISSN
+            for raw_issn in [issn_raw, eissn_raw]:
+                if pd.notna(raw_issn) and raw_issn:
+                    # Store with original formatting
+                    issn_to_data[raw_issn] = {
+                        'title': title,
+                        'if': if_value,
+                        'quartile': quartile,
+                        'database': 'WoS'
+                    }
+                    
+                    # Store normalized version (no hyphens, with leading zeros)
+                    normalized = normalize_issn(raw_issn)
+                    if normalized:
+                        if normalized not in normalized_to_data or \
+                           normalized_to_data[normalized].get('if', 0) < if_value:
+                            normalized_to_data[normalized] = {
+                                'title': title,
+                                'if': if_value,
+                                'quartile': quartile,
+                                'database': 'WoS'
+                            }
+        
+        return issn_to_data, normalized_to_data
+        
+    except Exception as e:
+        st.warning(f"Error loading WoS database: {str(e)}. WoS filtering will be disabled.")
+        return {}, {}
+
+@st.cache_data(show_spinner="Loading Scopus database...")
+def load_scopus_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
+    """
+    Load Scopus database from CS.xlsx and create search indices.
+    Takes highest quartile for each journal.
+    Returns: (issn_to_data, normalized_issn_to_data)
+    """
+    if not os.path.exists(SCOPUS_FILE):
+        st.warning(f"Scopus database file {SCOPUS_FILE} not found. Scopus filtering will be disabled.")
+        return {}, {}
+    
+    try:
+        df = pd.read_excel(SCOPUS_FILE)
+        
+        # Check required columns
+        required_cols = ['Title', 'Print ISSN', 'E-ISSN', 'CiteScore', 'Quartile']
+        if not all(col in df.columns for col in required_cols):
+            st.warning("Scopus database missing required columns. Scopus filtering will be disabled.")
+            return {}, {}
+        
+        # First, group by normalized ISSN to find highest quartile
+        temp_data = defaultdict(list)
+        
+        for _, row in df.iterrows():
+            title = row.get('Title', '')
+            citescore = row.get('CiteScore', 0)
+            quartile_num = row.get('Quartile', 4)  # Default to Q4 if missing
+            
+            # Convert quartile number to Q1-Q4 format
+            if pd.notna(quartile_num):
+                try:
+                    quartile = f"Q{int(quartile_num)}"
+                except:
+                    quartile = "Q4"
+            else:
+                quartile = "Q4"
+            
+            # Process Print ISSN
+            print_issn_raw = row.get('Print ISSN', '')
+            eissn_raw = row.get('E-ISSN', '')
+            
+            for raw_issn in [print_issn_raw, eissn_raw]:
+                if pd.notna(raw_issn) and raw_issn:
+                    normalized = normalize_issn(raw_issn)
+                    if normalized:
+                        temp_data[normalized].append({
+                            'title': title,
+                            'citescore': citescore,
+                            'quartile': quartile,
+                            'quartile_num': int(quartile[1]) if quartile[1:].isdigit() else 4
+                        })
+        
+        # For each normalized ISSN, take the entry with highest quartile (lowest number)
+        normalized_to_data = {}
+        for norm_issn, entries in temp_data.items():
+            if entries:
+                # Find entry with highest quartile (lowest quartile number)
+                best_entry = min(entries, key=lambda x: x['quartile_num'])
+                normalized_to_data[norm_issn] = {
+                    'title': best_entry['title'],
+                    'citescore': best_entry['citescore'],
+                    'quartile': best_entry['quartile'],
+                    'database': 'Scopus'
+                }
+        
+        # Also create mapping with original ISSN strings for exact matching
+        issn_to_data = {}
+        for _, row in df.iterrows():
+            title = row.get('Title', '')
+            citescore = row.get('CiteScore', 0)
+            
+            # Process Print ISSN
+            print_issn_raw = row.get('Print ISSN', '')
+            if pd.notna(print_issn_raw) and print_issn_raw:
+                normalized = normalize_issn(print_issn_raw)
+                if normalized and normalized in normalized_to_data:
+                    issn_to_data[print_issn_raw] = normalized_to_data[normalized]
+            
+            # Process E-ISSN
+            eissn_raw = row.get('E-ISSN', '')
+            if pd.notna(eissn_raw) and eissn_raw:
+                normalized = normalize_issn(eissn_raw)
+                if normalized and normalized in normalized_to_data:
+                    issn_to_data[eissn_raw] = normalized_to_data[normalized]
+        
+        return issn_to_data, normalized_to_data
+        
+    except Exception as e:
+        st.warning(f"Error loading Scopus database: {str(e)}. Scopus filtering will be disabled.")
+        return {}, {}
+
+# Load databases at startup
+if 'wos_data' not in st.session_state:
+    wos_issn, wos_norm = load_wos_database()
+    st.session_state['wos_data'] = {
+        'issn_map': wos_issn,
+        'normalized_map': wos_norm
+    }
+
+if 'scopus_data' not in st.session_state:
+    scopus_issn, scopus_norm = load_scopus_database()
+    st.session_state['scopus_data'] = {
+        'issn_map': scopus_issn,
+        'normalized_map': scopus_norm
+    }
+
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
@@ -607,6 +782,123 @@ def validate_year_range(years: List[int]) -> Tuple[bool, str]:
         return False, "Period cannot exceed 30 years (performance reasons)"
     
     return True, "Valid"
+
+def normalize_issn(issn: Any) -> Optional[str]:
+    """
+    Normalize ISSN to 8-digit format without hyphens.
+    Handles:
+    - With hyphens: 0007-9235 -> 00079235
+    - Without hyphens: 15299732 -> 15299732
+    - Shortened: 664308 -> 00664308
+    """
+    if pd.isna(issn) or not issn:
+        return None
+    
+    # Convert to string and remove any whitespace
+    issn_str = str(issn).strip()
+    
+    # Remove hyphens and spaces
+    clean = re.sub(r'[\s-]', '', issn_str)
+    
+    # If it's all digits, pad with leading zeros to 8 digits
+    if clean.isdigit():
+        if len(clean) < 8:
+            clean = clean.zfill(8)
+        if len(clean) == 8:
+            return clean
+    
+    # If it has X at the end (like some ISSNs), handle separately
+    if re.match(r'^\d{7}[\dX]$', clean):
+        return clean
+    
+    return None
+
+def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional[str], 
+                             issn_list: List[str]) -> Tuple[Dict, Dict]:
+    """
+    Check if any ISSN matches WoS or Scopus databases.
+    Returns: (wos_info, scopus_info)
+    """
+    wos_info = {'indexed': False, 'if': None, 'quartile': None, 'title': None}
+    scopus_info = {'indexed': False, 'citescore': None, 'quartile': None, 'title': None}
+    
+    # Collect all ISSNs to check
+    all_issns = set()
+    
+    # Add print and electronic ISSN
+    if issn_print:
+        all_issns.add(issn_print)
+        normalized = normalize_issn(issn_print)
+        if normalized:
+            all_issns.add(normalized)
+    
+    if issn_electronic:
+        all_issns.add(issn_electronic)
+        normalized = normalize_issn(issn_electronic)
+        if normalized:
+            all_issns.add(normalized)
+    
+    # Add all ISSNs from list
+    for issn in issn_list:
+        if issn:
+            all_issns.add(issn)
+            normalized = normalize_issn(issn)
+            if normalized:
+                all_issns.add(normalized)
+    
+    # Check WoS database
+    if st.session_state['wos_data']['issn_map'] or st.session_state['wos_data']['normalized_map']:
+        for issn in all_issns:
+            # Try exact match first
+            if issn in st.session_state['wos_data']['issn_map']:
+                data = st.session_state['wos_data']['issn_map'][issn]
+                wos_info = {
+                    'indexed': True,
+                    'if': data.get('if'),
+                    'quartile': data.get('quartile'),
+                    'title': data.get('title')
+                }
+                break
+            
+            # Try normalized match
+            normalized = normalize_issn(issn)
+            if normalized and normalized in st.session_state['wos_data']['normalized_map']:
+                data = st.session_state['wos_data']['normalized_map'][normalized]
+                wos_info = {
+                    'indexed': True,
+                    'if': data.get('if'),
+                    'quartile': data.get('quartile'),
+                    'title': data.get('title')
+                }
+                break
+    
+    # Check Scopus database
+    if st.session_state['scopus_data']['issn_map'] or st.session_state['scopus_data']['normalized_map']:
+        for issn in all_issns:
+            # Try exact match first
+            if issn in st.session_state['scopus_data']['issn_map']:
+                data = st.session_state['scopus_data']['issn_map'][issn]
+                scopus_info = {
+                    'indexed': True,
+                    'citescore': data.get('citescore'),
+                    'quartile': data.get('quartile'),
+                    'title': data.get('title')
+                }
+                break
+            
+            # Try normalized match
+            normalized = normalize_issn(issn)
+            if normalized and normalized in st.session_state['scopus_data']['normalized_map']:
+                data = st.session_state['scopus_data']['normalized_map'][normalized]
+                scopus_info = {
+                    'indexed': True,
+                    'citescore': data.get('citescore'),
+                    'quartile': data.get('quartile'),
+                    'title': data.get('title')
+                }
+                break
+    
+    return wos_info, scopus_info
 
 @retry(
     stop=stop_after_attempt(MAX_RETRIES),
@@ -1044,6 +1336,9 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
                         issn_print = issn_list[0]
                         issn_electronic = issn_list[1]
     
+    # Check WoS and Scopus indexing
+    wos_info, scopus_info = check_issn_in_databases(issn_print, issn_electronic, issn_list)
+    
     enriched = {
         'id': paper.get('id', ''),
         'doi': doi,
@@ -1062,8 +1357,26 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
         'issn_electronic': issn_electronic,
         'issn_list': issn_list,  # Store full list for reference
         'is_referenced_by_count': paper.get('_validation', {}).get('is_referenced_by_count', 0) if paper.get('_validation') else 0,
-        'references_count': paper.get('_validation', {}).get('references_count', paper.get('referenced_works_count', 0)) if paper.get('_validation') else paper.get('referenced_works_count', 0)
+        'references_count': paper.get('_validation', {}).get('references_count', paper.get('referenced_works_count', 0)) if paper.get('_validation') else paper.get('referenced_works_count', 0),
+        # WoS indexing info
+        'wos_indexed': wos_info['indexed'],
+        'wos_if': wos_info.get('if'),
+        'wos_quartile': wos_info.get('quartile'),
+        'wos_journal': wos_info.get('title'),
+        # Scopus indexing info
+        'scopus_indexed': scopus_info['indexed'],
+        'scopus_citescore': scopus_info.get('citescore'),
+        'scopus_quartile': scopus_info.get('quartile'),
+        'scopus_journal': scopus_info.get('title'),
+        # Combined indexing
+        'indexed_in': []
     }
+    
+    # Add to indexed_in list
+    if wos_info['indexed']:
+        enriched['indexed_in'].append('WoS')
+    if scopus_info['indexed']:
+        enriched['indexed_in'].append('Scopus')
     
     # Authors processing
     authorships = paper.get('authorships', [])
@@ -1151,6 +1464,9 @@ def analyze_papers(papers: List[Dict], crossref_data: Optional[Dict] = None) -> 
             'total_citations': 0,
             'yearly_papers': {},
             'yearly_citations': {},
+            'yearly_papers_wos': {},
+            'yearly_papers_scopus': {},
+            'yearly_papers_both': {},
             'top_authors': [],
             'top_journals': [],
             'top_publishers': [],
@@ -1167,13 +1483,28 @@ def analyze_papers(papers: List[Dict], crossref_data: Optional[Dict] = None) -> 
     total_papers = len(enriched_papers)
     total_citations = sum(p['cited_by_count'] for p in enriched_papers)
     
+    # Count papers by database indexing
+    wos_papers = [p for p in enriched_papers if p.get('wos_indexed')]
+    scopus_papers = [p for p in enriched_papers if p.get('scopus_indexed')]
+    both_papers = [p for p in enriched_papers if p.get('wos_indexed') and p.get('scopus_indexed')]
+    
     yearly_papers = defaultdict(int)
     yearly_citations = defaultdict(int)
+    yearly_papers_wos = defaultdict(int)
+    yearly_papers_scopus = defaultdict(int)
+    yearly_papers_both = defaultdict(int)
+    
     for p in enriched_papers:
         year = p['publication_year']
         if year:
             yearly_papers[year] += 1
             yearly_citations[year] += p['cited_by_count']
+            if p.get('wos_indexed'):
+                yearly_papers_wos[year] += 1
+            if p.get('scopus_indexed'):
+                yearly_papers_scopus[year] += 1
+            if p.get('wos_indexed') and p.get('scopus_indexed'):
+                yearly_papers_both[year] += 1
     
     all_authors = []
     for p in enriched_papers:
@@ -1223,8 +1554,14 @@ def analyze_papers(papers: List[Dict], crossref_data: Optional[Dict] = None) -> 
     return {
         'total_papers': total_papers,
         'total_citations': total_citations,
+        'wos_papers': len(wos_papers),
+        'scopus_papers': len(scopus_papers),
+        'both_papers': len(both_papers),
         'yearly_papers': dict(yearly_papers),
         'yearly_citations': dict(yearly_citations),
+        'yearly_papers_wos': dict(yearly_papers_wos),
+        'yearly_papers_scopus': dict(yearly_papers_scopus),
+        'yearly_papers_both': dict(yearly_papers_both),
         'top_authors': top_authors,
         'top_journals': top_journals,
         'top_publishers': top_publishers,
@@ -1313,7 +1650,7 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         
         progress_bar.progress(0.8)
         
-        status_container.text("Analyzing data...")
+        status_container.text("Analyzing data and checking WoS/Scopus indexing...")
         
         analysis_results = analyze_papers(filtered_papers, crossref_data)
         
@@ -1369,6 +1706,68 @@ def plot_yearly_publications(yearly_data: Dict[int, int], colors: Dict, color_sc
         yaxis=dict(
             title_font=dict(family='serif', size=11, weight='bold'),
             tickfont=dict(family='serif', size=10)
+        )
+    )
+    
+    fig.update_xaxes(tickangle=45)
+    return fig
+
+def plot_comparative_publications(yearly_papers: Dict[int, int], 
+                                   yearly_wos: Dict[int, int], 
+                                   yearly_scopus: Dict[int, int],
+                                   colors: Dict, color_scale: str):
+    """Plot comparative publications by year (OpenAlex vs WoS vs Scopus)"""
+    years = sorted(set(list(yearly_papers.keys()) + list(yearly_wos.keys()) + list(yearly_scopus.keys())))
+    
+    all_counts = [yearly_papers.get(y, 0) for y in years]
+    wos_counts = [yearly_wos.get(y, 0) for y in years]
+    scopus_counts = [yearly_scopus.get(y, 0) for y in years]
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        name='All OpenAlex',
+        x=years,
+        y=all_counts,
+        marker_color=colors['primary'],
+        opacity=0.7
+    ))
+    
+    fig.add_trace(go.Bar(
+        name='WoS Indexed',
+        x=years,
+        y=wos_counts,
+        marker_color=colors['success'],
+        opacity=0.7
+    ))
+    
+    fig.add_trace(go.Bar(
+        name='Scopus Indexed',
+        x=years,
+        y=scopus_counts,
+        marker_color=colors['secondary'],
+        opacity=0.7
+    ))
+    
+    fig.update_layout(
+        title='Comparative Publications by Year: OpenAlex vs WoS vs Scopus',
+        xaxis_title='Year',
+        yaxis_title='Number of Publications',
+        barmode='group',
+        template='plotly_white',
+        hovermode='x',
+        font=dict(family='serif', size=10),
+        title_font=dict(family='serif', size=12, weight='bold'),
+        xaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        ),
+        yaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        ),
+        legend=dict(
+            font=dict(family='serif', size=10)
         )
     )
     
@@ -1683,6 +2082,57 @@ def plot_citations_vs_references(papers: List[Dict], colors: Dict, color_scale: 
     
     return fig
 
+def plot_quartile_distribution(papers: List[Dict], database: str, colors: Dict, color_scale: str):
+    """Plot quartile distribution for WoS or Scopus"""
+    if database == 'WoS':
+        quartiles = [p.get('wos_quartile') for p in papers if p.get('wos_indexed') and p.get('wos_quartile')]
+        title = 'WoS Quartile Distribution'
+        color = colors['success']
+    else:
+        quartiles = [p.get('scopus_quartile') for p in papers if p.get('scopus_indexed') and p.get('scopus_quartile')]
+        title = 'Scopus Quartile Distribution'
+        color = colors['secondary']
+    
+    if not quartiles:
+        return None
+    
+    quartile_counts = Counter(quartiles)
+    # Ensure all Q1-Q4 are present
+    for q in ['Q1', 'Q2', 'Q3', 'Q4']:
+        if q not in quartile_counts:
+            quartile_counts[q] = 0
+    
+    # Sort in order Q1, Q2, Q3, Q4
+    sorted_items = sorted(quartile_counts.items(), key=lambda x: x[0])
+    
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=[item[0] for item in sorted_items],
+        y=[item[1] for item in sorted_items],
+        marker_color=color,
+        marker_line_color=colors['gradient_end'],
+        marker_line_width=1
+    ))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title='Quartile',
+        yaxis_title='Number of Papers',
+        template='plotly_white',
+        font=dict(family='serif', size=10),
+        title_font=dict(family='serif', size=12, weight='bold'),
+        xaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        ),
+        yaxis=dict(
+            title_font=dict(family='serif', size=11, weight='bold'),
+            tickfont=dict(family='serif', size=10)
+        )
+    )
+    
+    return fig
+
 def plot_top_cited_table(papers: List[Dict], title: str, colors: Dict):
     """Create a table for top cited papers"""
     if not papers:
@@ -1694,7 +2144,9 @@ def plot_top_cited_table(papers: List[Dict], title: str, colors: Dict):
             'Citations': p['cited_by_count'],
             'Year': p['publication_year'],
             'Authors': ', '.join(p['authors'][:3]) + (' et al.' if len(p['authors']) > 3 else ''),
-            'Journal': p['journal'][:30] + '...' if len(p['journal']) > 30 else p['journal']
+            'Journal': p['journal'][:30] + '...' if len(p['journal']) > 30 else p['journal'],
+            'WoS': '✓' if p.get('wos_indexed') else '',
+            'Scopus': '✓' if p.get('scopus_indexed') else ''
         }
         for p in papers[:20]
     ])
@@ -1786,29 +2238,30 @@ def main():
                     st.rerun()
             st.markdown("---")
         
-        st.markdown(f"**API Status:**")
-        st.markdown(f"✅ OpenAlex")
-        st.markdown(f"✅ Crossref")
+        # Database status indicators (replacing API Status)
+        st.markdown(f"**📚 Database Status:**")
+        
+        wos_status = "✅" if st.session_state['wos_data']['normalized_map'] else "❌"
+        scopus_status = "✅" if st.session_state['scopus_data']['normalized_map'] else "❌"
+        
+        st.markdown(f"{wos_status} WoS (IF.xlsx)")
+        st.markdown(f"{scopus_status} Scopus (CS.xlsx)")
+        
+        if not st.session_state['wos_data']['normalized_map']:
+            st.markdown("⚠️ WoS file not found or invalid")
+        if not st.session_state['scopus_data']['normalized_map']:
+            st.markdown("⚠️ Scopus file not found or invalid")
+        
         st.markdown("---")
         
         st.markdown("**About:**")
         st.markdown("""
-        University & Institute publication analysis using OpenAlex with date validation via Crossref.
-        
-        **Data Sources:**
-        - OpenAlex: Primary search
-        - Crossref: Date validation
+        University & Institute publication analysis using OpenAlex with:
+        - Date validation via Crossref
+        - WoS indexing check (IF.xlsx)
+        - Scopus indexing check (CS.xlsx)
+        - Quartile analysis
         """)
-        
-        with st.expander("ℹ️ Rate Limits & Limits"):
-            st.markdown("""
-            - OpenAlex: 10 requests/sec
-            - Crossref: 50 requests/sec (no key)
-            - Max papers analyzed: 10,000
-            - Max period: 30 years
-            
-            Analysis may take time for large datasets.
-            """)
     
     st.markdown(f'<h1 class="main-header">🏛️ UnInst Analytics</h1>', unsafe_allow_html=True)
     
@@ -2123,7 +2576,7 @@ def main():
                 color_scale = st.session_state['color_scale']
                 recent = st.session_state['recent_institutions']
                 for key in list(st.session_state.keys()):
-                    if key not in ['ui_palette', 'color_scale', 'previous_palette', 'recent_institutions']:
+                    if key not in ['ui_palette', 'color_scale', 'previous_palette', 'recent_institutions', 'wos_data', 'scopus_data']:
                         del st.session_state[key]
                 st.session_state['ui_palette'] = palette
                 st.session_state['color_scale'] = color_scale
@@ -2174,6 +2627,47 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         
+        # New metrics for WoS and Scopus
+        st.markdown("### 📚 Database Indexing Summary")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            wos_percent = (data['wos_papers'] / data['total_papers'] * 100) if data['total_papers'] > 0 else 0
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="value">{data['wos_papers']:,}</div>
+                <div class="label">WoS Indexed ({wos_percent:.1f}%)</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            scopus_percent = (data['scopus_papers'] / data['total_papers'] * 100) if data['total_papers'] > 0 else 0
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="value">{data['scopus_papers']:,}</div>
+                <div class="label">Scopus Indexed ({scopus_percent:.1f}%)</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            both_percent = (data['both_papers'] / data['total_papers'] * 100) if data['total_papers'] > 0 else 0
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="value">{data['both_papers']:,}</div>
+                <div class="label">Both Databases ({both_percent:.1f}%)</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            neither = data['total_papers'] - (data['wos_papers'] + data['scopus_papers'] - data['both_papers'])
+            neither_percent = (neither / data['total_papers'] * 100) if data['total_papers'] > 0 else 0
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="value">{neither:,}</div>
+                <div class="label">Not Indexed ({neither_percent:.1f}%)</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
         st.markdown('<div class="info-box">', unsafe_allow_html=True)
         st.markdown(f"""
         **📊 Date Validation Statistics (Crossref):**
@@ -2192,8 +2686,8 @@ def main():
         
         st.markdown("---")
         
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-            "📈 Years", "👥 Authors", "📚 Journals", "🏢 Publishers", "📊 Citations", "🌍 Collaborations"
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+            "📈 Years", "👥 Authors", "📚 Journals", "🏢 Publishers", "📊 Citations", "🌍 Collaborations", "🔬 WoS/Scopus"
         ])
         
         with tab1:
@@ -2208,6 +2702,16 @@ def main():
             with col2:
                 fig_cit_year = plot_yearly_citations(data['yearly_citations'], colors, st.session_state['color_scale'])
                 st.plotly_chart(fig_cit_year, use_container_width=True)
+            
+            # Comparative plot
+            fig_comp = plot_comparative_publications(
+                data['yearly_papers'], 
+                data['yearly_papers_wos'], 
+                data['yearly_papers_scopus'],
+                colors, 
+                st.session_state['color_scale']
+            )
+            st.plotly_chart(fig_comp, use_container_width=True)
             
             fig_scatter = plot_citations_vs_references(data['enriched_papers'], colors, st.session_state['color_scale'])
             st.plotly_chart(fig_scatter, use_container_width=True)
@@ -2289,6 +2793,75 @@ def main():
             fig_yearly_collab = plot_yearly_collaboration(data['yearly_collaboration'], colors, st.session_state['color_scale'])
             st.plotly_chart(fig_yearly_collab, use_container_width=True)
         
+        with tab7:
+            st.markdown("### WoS and Scopus Analysis")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig_wos_quartile = plot_quartile_distribution(data['enriched_papers'], 'WoS', colors, st.session_state['color_scale'])
+                if fig_wos_quartile:
+                    st.plotly_chart(fig_wos_quartile, use_container_width=True)
+                else:
+                    st.info("No WoS-indexed papers with quartile information")
+            
+            with col2:
+                fig_scopus_quartile = plot_quartile_distribution(data['enriched_papers'], 'Scopus', colors, st.session_state['color_scale'])
+                if fig_scopus_quartile:
+                    st.plotly_chart(fig_scopus_quartile, use_container_width=True)
+                else:
+                    st.info("No Scopus-indexed papers with quartile information")
+            
+            # Top WoS journals by IF
+            wos_papers = [p for p in data['enriched_papers'] if p.get('wos_indexed') and p.get('wos_if')]
+            if wos_papers:
+                st.markdown("### Top WoS Journals by Impact Factor")
+                wos_journals = defaultdict(list)
+                for p in wos_papers:
+                    if p.get('wos_journal'):
+                        wos_journals[p['wos_journal']].append({
+                            'if': p.get('wos_if', 0),
+                            'title': p['title']
+                        })
+                
+                journal_avg_if = []
+                for journal, papers_list in wos_journals.items():
+                    avg_if = np.mean([p['if'] for p in papers_list if p['if']])
+                    journal_avg_if.append({
+                        'Journal': journal,
+                        'Papers': len(papers_list),
+                        'Average IF': avg_if
+                    })
+                
+                df_wos = pd.DataFrame(journal_avg_if)
+                df_wos = df_wos.sort_values('Average IF', ascending=False).head(15)
+                st.dataframe(df_wos, use_container_width=True)
+            
+            # Top Scopus journals by CiteScore
+            scopus_papers = [p for p in data['enriched_papers'] if p.get('scopus_indexed') and p.get('scopus_citescore')]
+            if scopus_papers:
+                st.markdown("### Top Scopus Journals by CiteScore")
+                scopus_journals = defaultdict(list)
+                for p in scopus_papers:
+                    if p.get('scopus_journal'):
+                        scopus_journals[p['scopus_journal']].append({
+                            'citescore': p.get('scopus_citescore', 0),
+                            'title': p['title']
+                        })
+                
+                journal_avg_citescore = []
+                for journal, papers_list in scopus_journals.items():
+                    avg_citescore = np.mean([p['citescore'] for p in papers_list if p['citescore']])
+                    journal_avg_citescore.append({
+                        'Journal': journal,
+                        'Papers': len(papers_list),
+                        'Average CiteScore': avg_citescore
+                    })
+                
+                df_scopus = pd.DataFrame(journal_avg_citescore)
+                df_scopus = df_scopus.sort_values('Average CiteScore', ascending=False).head(15)
+                st.dataframe(df_scopus, use_container_width=True)
+        
         st.markdown('</div>', unsafe_allow_html=True)
         
         st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -2311,7 +2884,14 @@ def main():
                 'References': p.get('references_count', 0),
                 'Citations (CR)': p.get('is_referenced_by_count', 0),
                 'Citations (OA)': p.get('cited_by_count', 0),
-                'Collaboration Type': p.get('collaboration_type', 'Unknown')
+                'Collaboration Type': p.get('collaboration_type', 'Unknown'),
+                'WoS Indexed': p.get('wos_indexed', False),
+                'WoS IF': p.get('wos_if', ''),
+                'WoS Quartile': p.get('wos_quartile', ''),
+                'Scopus Indexed': p.get('scopus_indexed', False),
+                'Scopus CiteScore': p.get('scopus_citescore', ''),
+                'Scopus Quartile': p.get('scopus_quartile', ''),
+                'Indexed In': ', '.join(p.get('indexed_in', []))
             }
             for p in data['enriched_papers']
         ])
@@ -2333,7 +2913,8 @@ def main():
                 
                 summary_data = {
                     'Metric': ['Institution', 'ROR', 'Country', 'Total Papers', 'Total Citations', 
-                              'Average Citations', 'Validated DOIs', 'Analysis Date'],
+                              'Average Citations', 'Validated DOIs', 'WoS Indexed', 'Scopus Indexed',
+                              'Both Databases', 'Analysis Date'],
                     'Value': [
                         st.session_state['institution_name'],
                         st.session_state['institution_ror'],
@@ -2342,6 +2923,9 @@ def main():
                         data['total_citations'],
                         f"{data['total_citations']/data['total_papers']:.2f}" if data['total_papers'] > 0 else 0,
                         validation['validated'],
+                        data['wos_papers'],
+                        data['scopus_papers'],
+                        data['both_papers'],
                         datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     ]
                 }
@@ -2375,6 +2959,9 @@ def main():
                 'summary': {
                     'total_papers': data['total_papers'],
                     'total_citations': data['total_citations'],
+                    'wos_papers': data['wos_papers'],
+                    'scopus_papers': data['scopus_papers'],
+                    'both_papers': data['both_papers'],
                     'validation_stats': validation,
                     'collaboration_types': data['collaboration_types']
                 },
@@ -2385,7 +2972,9 @@ def main():
                         'year': p['publication_year'],
                         'citations': p['cited_by_count'],
                         'references': p.get('references_count', 0),
-                        'doi': p['doi']
+                        'doi': p['doi'],
+                        'wos_indexed': p.get('wos_indexed', False),
+                        'scopus_indexed': p.get('scopus_indexed', False)
                     }
                     for p in data['enriched_papers'][:100]
                 ]
@@ -2403,13 +2992,9 @@ def main():
     
     st.markdown(f"""
     <div class="footer">
-        <p>🏛️ UnInst Analytics | Data: OpenAlex, Crossref | Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
+        <p>🏛️ UnInst Analytics | Data: OpenAlex, Crossref, WoS (IF.xlsx), Scopus (CS.xlsx) | Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
     </div>
     """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
-
-
-
-
