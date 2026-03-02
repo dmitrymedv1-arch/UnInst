@@ -530,7 +530,9 @@ WARN_PAPERS_THRESHOLD = 5000  # Show warning above this
 # Recent institutions storage
 if 'recent_institutions' not in st.session_state:
     st.session_state['recent_institutions'] = []
-
+if 'expanded_details' not in st.session_state:
+    st.session_state['expanded_details'] = {}
+    
 # ============================================================================
 # SESSION STATE INITIALIZATION
 # ============================================================================
@@ -1843,11 +1845,11 @@ def main():
             query = st.text_input(
                 "Institution or ROR ID",
                 placeholder="Enter name or ROR ID...",
-                key="inst_query"
+                key="inst_query_1"
             )
         
         with col2:
-            search_clicked = st.button("🔍 Search", type="primary", use_container_width=True)
+            search_clicked = st.button("🔍 Search", type="primary", key="search_btn", use_container_width=True)
         
         if search_clicked and query:
             with st.spinner("Searching for institution..."):
@@ -1899,30 +1901,29 @@ def main():
                     if results:
                         st.markdown("**Found institutions:**")
                         
-                        # Use session state to track expanded details
+                        # Initialize expanded details state if not exists
                         if 'expanded_details' not in st.session_state:
                             st.session_state['expanded_details'] = {}
                         
                         for i, inst in enumerate(results):
-                            # Create a unique container for each institution
-                            with st.container():
-                                cols = st.columns([3, 1, 1])
+                            # Create a container for each institution
+                            inst_container = st.container()
+                            
+                            with inst_container:
+                                col1, col2, col3 = st.columns([3, 1, 1])
                                 
-                                with cols[0]:
+                                with col1:
                                     st.markdown(f"**{inst['display_name']}**")
                                     st.markdown(f"ROR: {inst['ror']} | Country: {inst.get('country', 'N/A')} | Works: {inst['works_count']:,}")
                                 
-                                with cols[1]:
-                                    # Select button
-                                    select_key = f"select_{inst['id']}_{i}"
-                                    if st.button("Select", key=select_key, use_container_width=True):
-                                        # Set institution data in session state
+                                with col2:
+                                    # Select button with unique key
+                                    if st.button("Select", key=f"sel_{inst['id']}_{i}", use_container_width=True):
                                         st.session_state['institution_id'] = inst['id']
                                         st.session_state['institution_name'] = inst['display_name']
                                         st.session_state['institution_ror'] = inst['ror']
                                         st.session_state['institution_country'] = inst.get('country', 'N/A')
                                         
-                                        # Add to recent
                                         add_to_recent_institutions({
                                             'id': inst['id'],
                                             'name': inst['display_name'],
@@ -1930,35 +1931,34 @@ def main():
                                             'country': inst.get('country', 'N/A')
                                         })
                                         
-                                        # Move to next step and rerun
                                         st.session_state['step'] = 2
                                         st.rerun()
                                 
-                                with cols[2]:
-                                    # Details button
-                                    details_key = f"details_{inst['id']}_{i}"
-                                    if st.button("Details", key=details_key, use_container_width=True):
-                                        # Toggle expanded state for this institution
-                                        if inst['id'] in st.session_state['expanded_details']:
-                                            st.session_state['expanded_details'][inst['id']] = not st.session_state['expanded_details'][inst['id']]
+                                with col3:
+                                    # Details button with unique key
+                                    if st.button("Details", key=f"det_{inst['id']}_{i}", use_container_width=True):
+                                        # Toggle details for this institution
+                                        inst_id = inst['id']
+                                        if inst_id in st.session_state['expanded_details']:
+                                            st.session_state['expanded_details'][inst_id] = not st.session_state['expanded_details'][inst_id]
                                         else:
-                                            st.session_state['expanded_details'][inst['id']] = True
+                                            st.session_state['expanded_details'][inst_id] = True
                                         st.rerun()
                                 
                                 # Show details if expanded
                                 if st.session_state['expanded_details'].get(inst['id'], False):
-                                    with st.expander(f"Details for {inst['display_name']}", expanded=True):
-                                        st.markdown(f"""
-                                        **Full Institution Details:**
-                                        - **Name:** {inst['display_name']}
-                                        - **ROR ID:** {inst['ror']}
-                                        - **OpenAlex ID:** {inst['id']}
-                                        - **Country:** {inst.get('country', 'N/A')}
-                                        - **Type:** {inst.get('type', 'N/A')}
-                                        - **Total Works:** {inst['works_count']:,}
-                                        
-                                        Click 'Select' to analyze this institution.
-                                        """)
+                                    st.markdown(f"""
+                                    <div style="background-color: {colors['background']}; padding: 1rem; border-radius: 8px; margin: 0.5rem 0;">
+                                        <h4>📋 Detailed Information</h4>
+                                        <p><strong>Full Name:</strong> {inst['display_name']}</p>
+                                        <p><strong>ROR ID:</strong> {inst['ror']}</p>
+                                        <p><strong>OpenAlex ID:</strong> {inst['id']}</p>
+                                        <p><strong>Country:</strong> {inst.get('country', 'N/A')}</p>
+                                        <p><strong>Type:</strong> {inst.get('type', 'N/A')}</p>
+                                        <p><strong>Total Works:</strong> {inst['works_count']:,}</p>
+                                        <p><em>Click 'Select' to analyze this institution.</em></p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
                                 
                                 st.markdown("---")
                     else:
@@ -1971,20 +1971,19 @@ def main():
                         </div>
                         """, unsafe_allow_html=True)
         
-        # Navigation buttons - only show if institution is selected
+        # Navigation buttons
         if st.session_state['institution_id']:
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("← Back", use_container_width=True):
+                if st.button("← Back", key="back_to_search", use_container_width=True):
                     st.session_state['step'] = 1
-                    # Clear selection but keep search results
                     st.session_state['institution_id'] = None
                     st.session_state['institution_name'] = ''
                     st.session_state['institution_ror'] = ''
                     st.session_state['institution_country'] = ''
                     st.rerun()
             with col2:
-                if st.button("Next →", type="primary", use_container_width=True):
+                if st.button("Next →", key="next_to_period", type="primary", use_container_width=True):
                     st.session_state['step'] = 2
                     st.rerun()
         
@@ -2406,4 +2405,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
