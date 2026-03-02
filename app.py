@@ -2778,16 +2778,27 @@ def main():
                 
                 journal_avg_if = []
                 for journal, papers_list in wos_journals.items():
-                    avg_if = np.mean([p['if'] for p in papers_list if p['if']])
+                    # Фильтруем None значения
+                    if_values = [p['if'] for p in papers_list if p['if'] is not None]
+                    if if_values:
+                        avg_if = np.mean(if_values)
+                    else:
+                        avg_if = 0
+                    
                     journal_avg_if.append({
                         'Journal': journal,
                         'Papers': len(papers_list),
                         'Average IF': avg_if
                     })
                 
-                df_wos = pd.DataFrame(journal_avg_if)
-                df_wos = df_wos.sort_values('Average IF', ascending=False).head(15)
-                st.dataframe(df_wos, use_container_width=True)
+                if journal_avg_if:
+                    df_wos = pd.DataFrame(journal_avg_if)
+                    # Проверяем наличие колонки перед сортировкой
+                    if 'Average IF' in df_wos.columns:
+                        df_wos = df_wos.sort_values('Average IF', ascending=False).head(15)
+                        st.dataframe(df_wos, use_container_width=True)
+                    else:
+                        st.warning("Could not create Average IF column")
             
             # Top Scopus journals by CiteScore
             scopus_papers = [p for p in data['enriched_papers'] if p.get('scopus_indexed') and p.get('scopus_citescore')]
@@ -2803,16 +2814,27 @@ def main():
                 
                 journal_avg_citescore = []
                 for journal, papers_list in scopus_journals.items():
-                    avg_citescore = np.mean([p['citescore'] for p in papers_list if p['citescore']])
+                    # Фильтруем None значения
+                    citescore_values = [p['citescore'] for p in papers_list if p['citescore'] is not None]
+                    if citescore_values:
+                        avg_citescore = np.mean(citescore_values)
+                    else:
+                        avg_citescore = 0
+                    
                     journal_avg_citescore.append({
                         'Journal': journal,
                         'Papers': len(papers_list),
                         'Average CiteScore': avg_citescore
                     })
                 
-                df_scopus = pd.DataFrame(journal_avg_citescore)
-                df_scopus = df_scopus.sort_values('Average CiteScore', ascending=False).head(15)
-                st.dataframe(df_scopus, use_container_width=True)
+                if journal_avg_citescore:
+                    df_scopus = pd.DataFrame(journal_avg_citescore)
+                    # Проверяем наличие колонки перед сортировкой
+                    if 'Average CiteScore' in df_scopus.columns:
+                        df_scopus = df_scopus.sort_values('Average CiteScore', ascending=False).head(15)
+                        st.dataframe(df_scopus, use_container_width=True)
+                    else:
+                        st.warning("Could not create Average CiteScore column")
         
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -2950,6 +2972,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
