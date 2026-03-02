@@ -1119,14 +1119,18 @@ def add_to_recent_institutions(inst: Dict):
     """Add institution to recent list"""
     recent = st.session_state['recent_institutions']
     
+    # Check if already exists
     for i, existing in enumerate(recent):
         if existing['id'] == inst['id']:
+            # Move to front
             recent.pop(i)
             recent.insert(0, inst)
             break
     else:
+        # Add new
         recent.insert(0, inst)
     
+    # Keep only last 5
     st.session_state['recent_institutions'] = recent[:5]
 
 # ============================================================================
@@ -1820,7 +1824,7 @@ def main():
     step_html += '</div>'
     
     st.markdown(step_html, unsafe_allow_html=True)
-    
+
     if st.session_state['step'] == 1:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("### 🔍 Step 1: Institution Search")
@@ -1848,6 +1852,7 @@ def main():
         if search_clicked and query:
             with st.spinner("Searching for institution..."):
                 if is_ror_id(query):
+                    # Search by ROR
                     inst = get_institution_by_ror(query)
                     if inst:
                         st.session_state['institution_id'] = inst['id']
@@ -1855,6 +1860,7 @@ def main():
                         st.session_state['institution_ror'] = inst['ror']
                         st.session_state['institution_country'] = inst.get('country', 'N/A')
                         
+                        # Add to recent
                         add_to_recent_institutions({
                             'id': inst['id'],
                             'name': inst['display_name'],
@@ -1872,7 +1878,13 @@ def main():
                         </div>
                         """, unsafe_allow_html=True)
                         
+                        # Store in session for next step
                         st.session_state['search_results'] = [inst]
+                        
+                        # Automatically proceed to next step after short delay
+                        time.sleep(1)
+                        st.session_state['step'] = 2
+                        st.rerun()
                     else:
                         st.markdown(f"""
                         <div class="error-box">
@@ -1880,6 +1892,7 @@ def main():
                         </div>
                         """, unsafe_allow_html=True)
                 else:
+                    # Search by name
                     results = search_institution(query)
                     st.session_state['search_results'] = results
                     
@@ -1887,17 +1900,25 @@ def main():
                         st.markdown("**Found institutions:**")
                         
                         for i, inst in enumerate(results):
-                            col1, col2, col3 = st.columns([3, 1, 1])
-                            with col1:
+                            # Create a unique key for each row
+                            row_key = f"inst_row_{i}_{inst['id']}"
+                            
+                            cols = st.columns([3, 1, 1])
+                            
+                            with cols[0]:
                                 st.markdown(f"**{inst['display_name']}**")
                                 st.markdown(f"ROR: {inst['ror']} | Country: {inst.get('country', 'N/A')} | Works: {inst['works_count']:,}")
-                            with col2:
-                                if st.button("Select", key=f"select_{i}"):
+                            
+                            with cols[1]:
+                                # Select button with unique key
+                                if st.button("Select", key=f"select_{i}_{inst['id']}", use_container_width=True):
+                                    # Set institution data in session state
                                     st.session_state['institution_id'] = inst['id']
                                     st.session_state['institution_name'] = inst['display_name']
                                     st.session_state['institution_ror'] = inst['ror']
                                     st.session_state['institution_country'] = inst.get('country', 'N/A')
                                     
+                                    # Add to recent
                                     add_to_recent_institutions({
                                         'id': inst['id'],
                                         'name': inst['display_name'],
@@ -1905,10 +1926,27 @@ def main():
                                         'country': inst.get('country', 'N/A')
                                     })
                                     
+                                    # Move to next step and rerun
                                     st.session_state['step'] = 2
                                     st.rerun()
-                            with col3:
-                                st.button("Details", key=f"details_{i}", disabled=True)
+                            
+                            with cols[2]:
+                                # Details button - now enabled but with placeholder functionality
+                                if st.button("Details", key=f"details_{i}_{inst['id']}", use_container_width=True):
+                                    # Show more details in an expander or modal
+                                    with st.expander(f"Details for {inst['display_name']}", expanded=True):
+                                        st.markdown(f"""
+                                        **Full Institution Details:**
+                                        - **Name:** {inst['display_name']}
+                                        - **ROR ID:** {inst['ror']}
+                                        - **OpenAlex ID:** {inst['id']}
+                                        - **Country:** {inst.get('country', 'N/A')}
+                                        - **Type:** {inst.get('type', 'N/A')}
+                                        - **Total Works:** {inst['works_count']:,}
+                                        
+                                        Click 'Select' to analyze this institution.
+                                        """)
+                            
                             st.markdown("---")
                     else:
                         st.markdown(f"""
@@ -1920,11 +1958,17 @@ def main():
                         </div>
                         """, unsafe_allow_html=True)
         
+        # Navigation buttons - only show if institution is selected
         if st.session_state['institution_id']:
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("← Back", use_container_width=True):
                     st.session_state['step'] = 1
+                    # Clear selection but keep search results
+                    st.session_state['institution_id'] = None
+                    st.session_state['institution_name'] = ''
+                    st.session_state['institution_ror'] = ''
+                    st.session_state['institution_country'] = ''
                     st.rerun()
             with col2:
                 if st.button("Next →", type="primary", use_container_width=True):
@@ -2349,4 +2393,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
