@@ -1481,12 +1481,7 @@ def main():
         else:
             status = ""
         
-        step_html += f'''
-    <div class="step {status}">
-        <div class="step-number">{i+1}</div>
-        <div>{step_name}</div>
-    </div>
-        '''
+        step_html += f'<div class="step {status}"><div class="step-number">{i+1}</div><div>{step_name}</div></div>'
     step_html += '</div>'
     
     st.markdown(step_html, unsafe_allow_html=True)
@@ -2155,6 +2150,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
