@@ -1827,7 +1827,7 @@ def main():
     
     st.markdown(step_html, unsafe_allow_html=True)
 
-    elif st.session_state['step'] == 1:
+    if st.session_state['step'] == 1:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("### 🔍 Step 1: Institution Search")
         
@@ -2405,5 +2405,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
