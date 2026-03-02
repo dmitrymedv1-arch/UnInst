@@ -566,6 +566,10 @@ if 'search_query' not in st.session_state:
     st.session_state['search_query'] = ''
 if 'search_performed' not in st.session_state:
     st.session_state['search_performed'] = False
+if 'recent_institutions' not in st.session_state:
+    st.session_state['recent_institutions'] = []
+if 'expanded_details' not in st.session_state:
+    st.session_state['expanded_details'] = {}
 
 # ============================================================================
 # DATABASE LOADING AND CACHING
@@ -2946,6 +2950,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
