@@ -633,11 +633,16 @@ def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
     """
     Load WoS database from IF.xlsx
     """
-    if not os.path.exists('IF.xlsx'):
+    # Получаем путь к директории, где находится текущий скрипт
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Формируем полный путь к файлу
+    wos_file_path = os.path.join(script_dir, 'IF.xlsx')
+    
+    if not os.path.exists(wos_file_path):
         return {}, {}
     
     try:
-        df = pd.read_excel('IF.xlsx')
+        df = pd.read_excel(wos_file_path)
         
         # Проверяем наличие необходимых колонок
         required_cols = ['ISSN', 'IF', 'Quartile']
@@ -3029,3 +3034,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
