@@ -1399,18 +1399,34 @@ def plot_citations_vs_references(papers: List[Dict], colors: Dict):
     
     fig = go.Figure()
     
+    # Определяем уникальные годы
+    unique_years = sorted(set(years))
+    
+    # Настраиваем параметры цветовой шкалы в зависимости от количества уникальных годов
+    marker_dict = {
+        'size': 8,
+        'color': years,
+        'colorscale': 'Viridis',
+        'showscale': True,
+        'colorbar': dict(title='Year'),
+        'line': dict(width=1, color='white')
+    }
+    
+    # Если только один уникальный год, устанавливаем фиксированный диапазон
+    if len(unique_years) == 1:
+        single_year = unique_years[0]
+        marker_dict['cmin'] = single_year - 0.5
+        marker_dict['cmax'] = single_year + 0.5
+    else:
+        # Для нескольких лет добавляем небольшой отступ по краям
+        marker_dict['cmin'] = min(years) - 0.5
+        marker_dict['cmax'] = max(years) + 0.5
+    
     fig.add_trace(go.Scatter(
         x=references,
         y=citations,
         mode='markers',
-        marker=dict(
-            size=8,
-            color=years,
-            colorscale='Viridis',
-            showscale=True,
-            colorbar=dict(title='Year'),
-            line=dict(width=1, color='white')
-        ),
+        marker=marker_dict,
         text=[p['title'][:50] + '...' for p in papers],
         hovertemplate='<b>%{text}</b><br>Citations: %{y}<br>References: %{x}<br>Year: %{marker.color}<extra></extra>'
     ))
@@ -2145,6 +2161,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
