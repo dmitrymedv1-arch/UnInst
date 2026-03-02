@@ -1825,7 +1825,7 @@ def main():
     
     st.markdown(step_html, unsafe_allow_html=True)
 
-    if st.session_state['step'] == 1:
+    elif st.session_state['step'] == 1:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("### 🔍 Step 1: Institution Search")
         
@@ -1899,41 +1899,54 @@ def main():
                     if results:
                         st.markdown("**Found institutions:**")
                         
+                        # Use session state to track expanded details
+                        if 'expanded_details' not in st.session_state:
+                            st.session_state['expanded_details'] = {}
+                        
                         for i, inst in enumerate(results):
-                            # Create a unique key for each row
-                            row_key = f"inst_row_{i}_{inst['id']}"
-                            
-                            cols = st.columns([3, 1, 1])
-                            
-                            with cols[0]:
-                                st.markdown(f"**{inst['display_name']}**")
-                                st.markdown(f"ROR: {inst['ror']} | Country: {inst.get('country', 'N/A')} | Works: {inst['works_count']:,}")
-                            
-                            with cols[1]:
-                                # Select button with unique key
-                                if st.button("Select", key=f"select_{i}_{inst['id']}", use_container_width=True):
-                                    # Set institution data in session state
-                                    st.session_state['institution_id'] = inst['id']
-                                    st.session_state['institution_name'] = inst['display_name']
-                                    st.session_state['institution_ror'] = inst['ror']
-                                    st.session_state['institution_country'] = inst.get('country', 'N/A')
-                                    
-                                    # Add to recent
-                                    add_to_recent_institutions({
-                                        'id': inst['id'],
-                                        'name': inst['display_name'],
-                                        'ror': inst['ror'],
-                                        'country': inst.get('country', 'N/A')
-                                    })
-                                    
-                                    # Move to next step and rerun
-                                    st.session_state['step'] = 2
-                                    st.rerun()
-                            
-                            with cols[2]:
-                                # Details button - now enabled but with placeholder functionality
-                                if st.button("Details", key=f"details_{i}_{inst['id']}", use_container_width=True):
-                                    # Show more details in an expander or modal
+                            # Create a unique container for each institution
+                            with st.container():
+                                cols = st.columns([3, 1, 1])
+                                
+                                with cols[0]:
+                                    st.markdown(f"**{inst['display_name']}**")
+                                    st.markdown(f"ROR: {inst['ror']} | Country: {inst.get('country', 'N/A')} | Works: {inst['works_count']:,}")
+                                
+                                with cols[1]:
+                                    # Select button
+                                    select_key = f"select_{inst['id']}_{i}"
+                                    if st.button("Select", key=select_key, use_container_width=True):
+                                        # Set institution data in session state
+                                        st.session_state['institution_id'] = inst['id']
+                                        st.session_state['institution_name'] = inst['display_name']
+                                        st.session_state['institution_ror'] = inst['ror']
+                                        st.session_state['institution_country'] = inst.get('country', 'N/A')
+                                        
+                                        # Add to recent
+                                        add_to_recent_institutions({
+                                            'id': inst['id'],
+                                            'name': inst['display_name'],
+                                            'ror': inst['ror'],
+                                            'country': inst.get('country', 'N/A')
+                                        })
+                                        
+                                        # Move to next step and rerun
+                                        st.session_state['step'] = 2
+                                        st.rerun()
+                                
+                                with cols[2]:
+                                    # Details button
+                                    details_key = f"details_{inst['id']}_{i}"
+                                    if st.button("Details", key=details_key, use_container_width=True):
+                                        # Toggle expanded state for this institution
+                                        if inst['id'] in st.session_state['expanded_details']:
+                                            st.session_state['expanded_details'][inst['id']] = not st.session_state['expanded_details'][inst['id']]
+                                        else:
+                                            st.session_state['expanded_details'][inst['id']] = True
+                                        st.rerun()
+                                
+                                # Show details if expanded
+                                if st.session_state['expanded_details'].get(inst['id'], False):
                                     with st.expander(f"Details for {inst['display_name']}", expanded=True):
                                         st.markdown(f"""
                                         **Full Institution Details:**
@@ -1946,8 +1959,8 @@ def main():
                                         
                                         Click 'Select' to analyze this institution.
                                         """)
-                            
-                            st.markdown("---")
+                                
+                                st.markdown("---")
                     else:
                         st.markdown(f"""
                         <div class="warning-box">
@@ -2393,3 +2406,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
