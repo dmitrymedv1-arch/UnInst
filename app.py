@@ -1071,6 +1071,92 @@ def analyze_papers(papers: List[Dict]) -> Dict:
         'enriched_papers': enriched_papers
     }
 
+def run_analysis_with_progress(institution_id: str, years: List[int], total_estimated: int, 
+                                progress_container, status_container) -> bool:
+    """Run complete analysis with progress tracking"""
+    try:
+        all_papers = []
+        cursor = "*"
+        page = 0
+        total_pages_to_fetch = min(
+            (total_estimated // 200) + 1,
+            MAX_PAGES
+        )
+        
+        # Step 1: Fetch from OpenAlex with limits
+        status_container.text("Loading data from OpenAlex...")
+        
+        papers_to_fetch = min(total_estimated, MAX_PAPERS_TO_ANALYZE)
+        status_container.text(f"Loading up to {papers_to_fetch:,} papers...")
+        
+        # Прогресс-бар в контейнере
+        progress_bar = progress_container.progress(0)
+        
+        while cursor and len(all_papers) < MAX_PAPERS_TO_ANALYZE and page < MAX_PAGES:
+            page += 1
+            progress = min(0.1 + (page / total_pages_to_fetch) * 0.3, 0.4)
+            progress_bar.progress(progress)
+            
+            papers, next_cursor, batch_count = fetch_papers_batch(
+                institution_id,
+                years,
+                cursor
+            )
+            
+            all_papers.extend(papers)
+            cursor = next_cursor
+            
+            status_container.text(f"Loaded {len(all_papers)} papers (page {page}/{total_pages_to_fetch})...")
+            time.sleep(0.1)  # Rate limiting
+        
+        status_container.text(f"✅ Loaded {len(all_papers)} papers from OpenAlex")
+        progress_bar.progress(0.4)
+        
+        # Step 2: Extract DOIs
+        dois = extract_dois_from_papers(all_papers)
+        status_container.text(f"Found {len(dois)} DOIs for validation")
+        progress_bar.progress(0.45)
+        
+        # Step 3: Validate with Crossref (synchronous)
+        status_container.text("Validating dates with Crossref...")
+        
+        crossref_data = make_crossref_request_batch(dois)
+        
+        status_container.text(f"✅ Validated {len(crossref_data)} DOIs")
+        progress_bar.progress(0.7)
+        
+        # Step 4: Filter by actual years
+        status_container.text("Filtering by actual publication years...")
+        
+        filtered_papers, validation_stats = filter_papers_by_actual_years(
+            all_papers,
+            crossref_data,
+            years
+        )
+        
+        progress_bar.progress(0.8)
+        
+        # Step 5: Analyze
+        status_container.text("Analyzing data...")
+        
+        analysis_results = analyze_papers(filtered_papers)
+        
+        st.session_state['papers_data'] = analysis_results
+        st.session_state['validation_stats'] = validation_stats
+        st.session_state['analysis_complete'] = True
+        
+        progress_bar.progress(1.0)
+        status_container.text("✅ Analysis complete!")
+        
+        time.sleep(1)  # Даем увидеть завершение
+        
+        return True
+        
+    except Exception as e:
+        status_container.text(f"❌ Error: {str(e)}")
+        st.error(f"Analysis failed: {str(e)}")
+        return False
+
 # ============================================================================
 # PLOTTING FUNCTIONS (PLOTLY)
 # ============================================================================
@@ -1469,8 +1555,10 @@ def main():
     st.markdown(f'<h1 class="main-header">🏛️ UnInst Analytics</h1>', unsafe_allow_html=True)
     
     # Step indicator - ALWAYS SHOWN
-    steps = ["Institution Search", "Period Selection", "Data Collection", "Results"]
+    steps = ["Institution Search", "Period Selection", "Results"]  # Убрали "Data Collection"
     current_step = st.session_state['step'] - 1
+    if current_step >= 2:  # Корректировка для 3-го шага (теперь Results это step 3)
+        current_step = 2 if st.session_state['step'] == 3 else st.session_state['step'] - 1
     
     step_html = '<div class="step-container">'
     for i, step_name in enumerate(steps):
@@ -1607,9 +1695,9 @@ def main():
                     st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
-     
+
     # ========================================================================
-    # STEP 2: YEAR SELECTION (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+    # STEP 2: YEAR SELECTION (С ЗАПУСКОМ АНАЛИЗА)
     # ========================================================================
     
     elif st.session_state['step'] == 2:
@@ -1655,7 +1743,7 @@ def main():
                 st.rerun()
         
         with col2:
-            if st.button("Check Availability →", type="primary", use_container_width=True):
+            if st.button("Start Analysis →", type="primary", use_container_width=True):
                 if year_input:
                     years = parse_year_input(year_input)
                     if years:
@@ -1678,9 +1766,7 @@ def main():
                                 st.session_state['total_papers'] = total
                                 
                                 if total > 0:
-                                    expanded = expand_year_range(years)
-                                    
-                                    # Clear any previous error/success messages by rerunning
+                                    # Clear any previous error/success messages
                                     st.rerun()
                     else:
                         st.markdown("""
@@ -1717,124 +1803,33 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
             
-            # Add Start Analysis button
+            # Add Start Analysis button (уже есть, но оставляем для ясности)
             col1, col2, col3 = st.columns([1, 1, 2])
             with col2:
-                if st.button("▶️ Start Analysis", type="primary", use_container_width=True):
-                    st.session_state['step'] = 3
-                    st.rerun()
+                if st.button("▶️ Start Analysis", type="primary", use_container_width=True, key="start_analysis_main"):
+                    # Запускаем анализ напрямую
+                    with st.spinner("Starting analysis..."):
+                        # Создаем контейнер для прогресса
+                        progress_container = st.empty()
+                        status_container = st.empty()
+                        
+                        # Запускаем сбор и анализ данных
+                        success = run_analysis_with_progress(
+                            st.session_state['institution_id'],
+                            st.session_state['years_range'],
+                            st.session_state['total_papers'],
+                            progress_container,
+                            status_container
+                        )
+                        
+                        if success:
+                            st.session_state['step'] = 4
+                            st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
-    
+  
     # ========================================================================
-    # STEP 3: DATA COLLECTION
-    # ========================================================================
-    
-    elif st.session_state['step'] == 3:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("### 📥 Step 3: Data Collection & Validation")
-        
-        st.markdown(f"""
-        <div class="info-box">
-            <strong>Analysis Parameters:</strong><br>
-            Institution: {st.session_state['institution_name']}<br>
-            Requested period: {min(st.session_state['years_range'])}-{max(st.session_state['years_range'])}<br>
-            Total papers (OpenAlex with expansion): {st.session_state['total_papers']:,}
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Progress tracking
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("← Back", use_container_width=True):
-                st.session_state['step'] = 2
-                st.rerun()
-        
-        with col2:
-            if st.button("Start Data Collection", type="primary", use_container_width=True):
-                all_papers = []
-                cursor = "*"
-                page = 0
-                total_pages_to_fetch = min(
-                    (st.session_state['total_papers'] // 200) + 1,
-                    MAX_PAGES
-                )
-                
-                # Step 1: Fetch from OpenAlex with limits
-                status_text.text("Loading data from OpenAlex...")
-                
-                papers_to_fetch = min(st.session_state['total_papers'], MAX_PAPERS_TO_ANALYZE)
-                status_text.text(f"Loading up to {papers_to_fetch:,} papers...")
-                
-                while cursor and len(all_papers) < MAX_PAPERS_TO_ANALYZE and page < MAX_PAGES:
-                    page += 1
-                    progress = min(0.1 + (page / total_pages_to_fetch) * 0.3, 0.4)
-                    progress_bar.progress(progress)
-                    
-                    papers, next_cursor, batch_count = fetch_papers_batch(
-                        st.session_state['institution_id'],
-                        st.session_state['years_range'],
-                        cursor
-                    )
-                    
-                    all_papers.extend(papers)
-                    cursor = next_cursor
-                    
-                    status_text.text(f"Loaded {len(all_papers)} papers (page {page}/{total_pages_to_fetch})...")
-                    time.sleep(0.1)  # Rate limiting
-                
-                status_text.text(f"✅ Loaded {len(all_papers)} papers from OpenAlex")
-                progress_bar.progress(0.4)
-                
-                # Step 2: Extract DOIs
-                dois = extract_dois_from_papers(all_papers)
-                status_text.text(f"Found {len(dois)} DOIs for validation")
-                progress_bar.progress(0.45)
-                
-                # Step 3: Validate with Crossref (synchronous)
-                status_text.text("Validating dates with Crossref...")
-                
-                crossref_data = make_crossref_request_batch(dois)
-                
-                status_text.text(f"✅ Validated {len(crossref_data)} DOIs")
-                progress_bar.progress(0.7)
-                
-                # Step 4: Filter by actual years
-                status_text.text("Filtering by actual publication years...")
-                
-                filtered_papers, validation_stats = filter_papers_by_actual_years(
-                    all_papers,
-                    crossref_data,
-                    st.session_state['years_range']
-                )
-                
-                progress_bar.progress(0.8)
-                
-                # Step 5: Analyze
-                status_text.text("Analyzing data...")
-                
-                analysis_results = analyze_papers(filtered_papers)
-                
-                st.session_state['papers_data'] = analysis_results
-                st.session_state['validation_stats'] = validation_stats
-                st.session_state['analysis_complete'] = True
-                
-                progress_bar.progress(1.0)
-                status_text.text("✅ Analysis complete!")
-                
-                time.sleep(0.5)
-                
-                st.session_state['step'] = 4
-                st.rerun()
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    # ========================================================================
-    # STEP 4: RESULTS
+    # STEP 3: RESULTS
     # ========================================================================
     
     elif st.session_state['step'] == 4 and st.session_state['analysis_complete']:
@@ -2150,6 +2145,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
