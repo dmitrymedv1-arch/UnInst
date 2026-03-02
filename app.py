@@ -567,7 +567,11 @@ if 'issn_cache' not in st.session_state:
     st.session_state['issn_cache'] = {}
 if 'crossref_data' not in st.session_state:
     st.session_state['crossref_data'] = None
-
+if 'search_query' not in st.session_state:
+    st.session_state['search_query'] = ''
+if 'search_performed' not in st.session_state:
+    st.session_state['search_performed'] = False
+    
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
@@ -1842,33 +1846,32 @@ def main():
         col1, col2 = st.columns([3, 1])
         
         with col1:
+            # Используем значение из session_state для отображения
             query = st.text_input(
                 "Institution or ROR ID",
+                value=st.session_state['search_query'],
                 placeholder="Enter name or ROR ID...",
-                key="inst_query_1"
+                key="inst_query_input"
             )
+            # Обновляем session_state при изменении
+            if query != st.session_state['search_query']:
+                st.session_state['search_query'] = query
+                # Сбрасываем результаты при изменении запроса
+                st.session_state['search_performed'] = False
+                st.session_state['search_results'] = None
         
         with col2:
             search_clicked = st.button("🔍 Search", type="primary", key="search_btn", use_container_width=True)
         
+        # Выполняем поиск ТОЛЬКО при нажатии кнопки Search
         if search_clicked and query:
             with st.spinner("Searching for institution..."):
                 if is_ror_id(query):
                     # Search by ROR
                     inst = get_institution_by_ror(query)
                     if inst:
-                        st.session_state['institution_id'] = inst['id']
-                        st.session_state['institution_name'] = inst['display_name']
-                        st.session_state['institution_ror'] = inst['ror']
-                        st.session_state['institution_country'] = inst.get('country', 'N/A')
-                        
-                        # Add to recent
-                        add_to_recent_institutions({
-                            'id': inst['id'],
-                            'name': inst['display_name'],
-                            'ror': inst['ror'],
-                            'country': inst.get('country', 'N/A')
-                        })
+                        st.session_state['search_results'] = [inst]
+                        st.session_state['search_performed'] = True
                         
                         st.markdown(f"""
                         <div class="success-box">
@@ -1879,15 +1882,9 @@ def main():
                             Total works in OpenAlex: {inst['works_count']:,}
                         </div>
                         """, unsafe_allow_html=True)
-                        
-                        # Store in session for next step
-                        st.session_state['search_results'] = [inst]
-                        
-                        # Automatically proceed to next step after short delay
-                        time.sleep(1)
-                        st.session_state['step'] = 2
-                        st.rerun()
                     else:
+                        st.session_state['search_results'] = []
+                        st.session_state['search_performed'] = True
                         st.markdown(f"""
                         <div class="error-box">
                             ❌ Institution with ROR ID {query} not found
@@ -1897,81 +1894,88 @@ def main():
                     # Search by name
                     results = search_institution(query)
                     st.session_state['search_results'] = results
-                    
-                    if results:
-                        st.markdown("**Found institutions:**")
-                        
-                        # Initialize expanded details state if not exists
-                        if 'expanded_details' not in st.session_state:
-                            st.session_state['expanded_details'] = {}
-                        
-                        for i, inst in enumerate(results):
-                            # Create a container for each institution
-                            inst_container = st.container()
-                            
-                            with inst_container:
-                                col1, col2, col3 = st.columns([3, 1, 1])
-                                
-                                with col1:
-                                    st.markdown(f"**{inst['display_name']}**")
-                                    st.markdown(f"ROR: {inst['ror']} | Country: {inst.get('country', 'N/A')} | Works: {inst['works_count']:,}")
-                                
-                                with col2:
-                                    # Select button with unique key
-                                    if st.button("Select", key=f"sel_{inst['id']}_{i}", use_container_width=True):
-                                        st.session_state['institution_id'] = inst['id']
-                                        st.session_state['institution_name'] = inst['display_name']
-                                        st.session_state['institution_ror'] = inst['ror']
-                                        st.session_state['institution_country'] = inst.get('country', 'N/A')
-                                        
-                                        add_to_recent_institutions({
-                                            'id': inst['id'],
-                                            'name': inst['display_name'],
-                                            'ror': inst['ror'],
-                                            'country': inst.get('country', 'N/A')
-                                        })
-                                        
-                                        st.session_state['step'] = 2
-                                        st.rerun()
-                                
-                                with col3:
-                                    # Details button with unique key
-                                    if st.button("Details", key=f"det_{inst['id']}_{i}", use_container_width=True):
-                                        # Toggle details for this institution
-                                        inst_id = inst['id']
-                                        if inst_id in st.session_state['expanded_details']:
-                                            st.session_state['expanded_details'][inst_id] = not st.session_state['expanded_details'][inst_id]
-                                        else:
-                                            st.session_state['expanded_details'][inst_id] = True
-                                        st.rerun()
-                                
-                                # Show details if expanded
-                                if st.session_state['expanded_details'].get(inst['id'], False):
-                                    st.markdown(f"""
-                                    <div style="background-color: {colors['background']}; padding: 1rem; border-radius: 8px; margin: 0.5rem 0;">
-                                        <h4>📋 Detailed Information</h4>
-                                        <p><strong>Full Name:</strong> {inst['display_name']}</p>
-                                        <p><strong>ROR ID:</strong> {inst['ror']}</p>
-                                        <p><strong>OpenAlex ID:</strong> {inst['id']}</p>
-                                        <p><strong>Country:</strong> {inst.get('country', 'N/A')}</p>
-                                        <p><strong>Type:</strong> {inst.get('type', 'N/A')}</p>
-                                        <p><strong>Total Works:</strong> {inst['works_count']:,}</p>
-                                        <p><em>Click 'Select' to analyze this institution.</em></p>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                                
-                                st.markdown("---")
-                    else:
-                        st.markdown(f"""
-                        <div class="warning-box">
-                            ⚠️ No institutions found. Try:
-                            - Using a more general name
-                            - Checking spelling
-                            - Using ROR ID
-                        </div>
-                        """, unsafe_allow_html=True)
+                    st.session_state['search_performed'] = True
         
-        # Navigation buttons
+        # Отображаем результаты из session_state (если они есть)
+        if st.session_state['search_performed'] and st.session_state['search_results'] is not None:
+            results = st.session_state['search_results']
+            
+            if results:
+                st.markdown("**Found institutions:**")
+                
+                # Initialize expanded details state if not exists
+                if 'expanded_details' not in st.session_state:
+                    st.session_state['expanded_details'] = {}
+                
+                for i, inst in enumerate(results):
+                    # Create a unique key for this institution
+                    inst_key = f"{inst['id']}_{i}"
+                    
+                    # Create a container for each institution
+                    inst_container = st.container()
+                    
+                    with inst_container:
+                        col1, col2, col3 = st.columns([3, 1, 1])
+                        
+                        with col1:
+                            st.markdown(f"**{inst['display_name']}**")
+                            st.markdown(f"ROR: {inst['ror']} | Country: {inst.get('country', 'N/A')} | Works: {inst['works_count']:,}")
+                        
+                        with col2:
+                            # Select button - при нажатии устанавливаем институт и переходим к шагу 2
+                            if st.button("Select", key=f"select_{inst_key}", use_container_width=True):
+                                st.session_state['institution_id'] = inst['id']
+                                st.session_state['institution_name'] = inst['display_name']
+                                st.session_state['institution_ror'] = inst['ror']
+                                st.session_state['institution_country'] = inst.get('country', 'N/A')
+                                
+                                add_to_recent_institutions({
+                                    'id': inst['id'],
+                                    'name': inst['display_name'],
+                                    'ror': inst['ror'],
+                                    'country': inst.get('country', 'N/A')
+                                })
+                                
+                                st.session_state['step'] = 2
+                                st.rerun()
+                        
+                        with col3:
+                            # Details button - только переключаем детали, без rerun
+                            if st.button("Details", key=f"details_{inst_key}", use_container_width=True):
+                                # Toggle details for this institution
+                                if inst_key in st.session_state['expanded_details']:
+                                    st.session_state['expanded_details'][inst_key] = not st.session_state['expanded_details'][inst_key]
+                                else:
+                                    st.session_state['expanded_details'][inst_key] = True
+                                # Не вызываем rerun, просто обновляем состояние
+                        
+                        # Show details if expanded (используем уникальный ключ)
+                        if st.session_state['expanded_details'].get(inst_key, False):
+                            st.markdown(f"""
+                            <div style="background-color: {colors['background']}; padding: 1rem; border-radius: 8px; margin: 0.5rem 0;">
+                                <h4>📋 Detailed Information</h4>
+                                <p><strong>Full Name:</strong> {inst['display_name']}</p>
+                                <p><strong>ROR ID:</strong> {inst['ror']}</p>
+                                <p><strong>OpenAlex ID:</strong> {inst['id']}</p>
+                                <p><strong>Country:</strong> {inst.get('country', 'N/A')}</p>
+                                <p><strong>Type:</strong> {inst.get('type', 'N/A')}</p>
+                                <p><strong>Total Works:</strong> {inst['works_count']:,}</p>
+                                <p><em>Click 'Select' to analyze this institution.</em></p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        st.markdown("---")
+            else:
+                st.markdown(f"""
+                <div class="warning-box">
+                    ⚠️ No institutions found. Try:
+                    - Using a more general name
+                    - Checking spelling
+                    - Using ROR ID
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Navigation buttons (только если институт выбран)
         if st.session_state['institution_id']:
             col1, col2 = st.columns(2)
             with col1:
@@ -2405,6 +2409,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
