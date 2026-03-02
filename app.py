@@ -581,27 +581,23 @@ def normalize_issn(issn: Any) -> Optional[str]:
     Handles:
     - With hyphens: 0007-9235 -> 00079235
     - Without hyphens: 15299732 -> 15299732
-    - Shortened: 664308 -> 00664308
+    - With X at the end: 1234-567X -> 1234567X
     """
     if pd.isna(issn) or not issn:
         return None
     
     # Convert to string and remove any whitespace
-    issn_str = str(issn).strip()
+    issn_str = str(issn).strip().upper()
     
     # Remove hyphens and spaces
     clean = re.sub(r'[\s-]', '', issn_str)
     
-    # If it's all digits, pad with leading zeros to 8 digits
-    if clean.isdigit():
+    # If it's all digits or digits with X at the end, pad to 8 digits
+    if re.match(r'^\d{7}[\dX]?$', clean) or re.match(r'^\d{1,7}$', clean):
         if len(clean) < 8:
             clean = clean.zfill(8)
         if len(clean) == 8:
             return clean
-    
-    # If it has X at the end (like some ISSNs), handle separately
-    if re.match(r'^\d{7}[\dX]$', clean):
-        return clean
     
     return None
 
@@ -611,7 +607,6 @@ def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
     Load WoS database from IF.xlsx
     """
     if not os.path.exists('IF.xlsx'):
-        # Не показываем warning, просто возвращаем пустые словари
         return {}, {}
     
     try:
@@ -631,26 +626,27 @@ def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
                 if_value = row.get('IF', 0)
                 quartile = row.get('Quartile', '')
                 
-                # Прямое сохранение без нормализации
+                # Сохраняем оригинальный ISSN (с дефисом)
                 issn_to_data[issn] = {
                     'if': if_value,
                     'quartile': quartile,
-                    'database': 'WoS'
+                    'database': 'WoS',
+                    'title': row.get('Journal title', '')  # если есть колонка с названием журнала
                 }
                 
-                # Упрощенная нормализация (убираем дефисы)
-                norm_issn = issn.replace('-', '').strip()
+                # Нормализуем ISSN (убираем дефисы)
+                norm_issn = normalize_issn(issn)
                 if norm_issn:
                     normalized_to_data[norm_issn] = {
                         'if': if_value,
                         'quartile': quartile,
-                        'database': 'WoS'
+                        'database': 'WoS',
+                        'title': row.get('Journal title', '')
                     }
         
         return issn_to_data, normalized_to_data
         
     except Exception as e:
-        # Не показываем ошибку пользователю
         return {}, {}
 
 @st.cache_data(show_spinner="Loading Scopus database...")
@@ -678,20 +674,22 @@ def load_scopus_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
                 citescore = row.get('CiteScore', 0)
                 quartile = row.get('Quartile', '')
                 
-                # Прямое сохранение
+                # Сохраняем оригинальный ISSN (может быть с дефисом или без)
                 issn_to_data[issn] = {
                     'citescore': citescore,
                     'quartile': quartile,
-                    'database': 'Scopus'
+                    'database': 'Scopus',
+                    'title': row.get('Source title', '')  # если есть колонка с названием журнала
                 }
                 
-                # Упрощенная нормализация
-                norm_issn = issn.replace('-', '').strip()
+                # Нормализуем ISSN
+                norm_issn = normalize_issn(issn)
                 if norm_issn:
                     normalized_to_data[norm_issn] = {
                         'citescore': citescore,
                         'quartile': quartile,
-                        'database': 'Scopus'
+                        'database': 'Scopus',
+                        'title': row.get('Source title', '')
                     }
         
         return issn_to_data, normalized_to_data
@@ -2972,6 +2970,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
