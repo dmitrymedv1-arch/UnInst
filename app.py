@@ -529,7 +529,7 @@ MAX_PAGES = 50  # Maximum pages to fetch (200 papers per page)
 WARN_PAPERS_THRESHOLD = 5000  # Show warning above this
 
 # Database files
-BASE_DIR = os.getcwd()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WOS_FILE    = "IF.xlsx"
 SCOPUS_FILE = "CS.xlsx"
 
@@ -2999,6 +2999,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
