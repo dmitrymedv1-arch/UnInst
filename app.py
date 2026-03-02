@@ -528,11 +528,6 @@ MAX_PAPERS_TO_ANALYZE = 10000  # Maximum papers to process
 MAX_PAGES = 50  # Maximum pages to fetch (200 papers per page)
 WARN_PAPERS_THRESHOLD = 5000  # Show warning above this
 
-# Database files
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-WOS_FILE = os.path.join(BASE_DIR, "IF.xlsx")
-SCOPUS_FILE = os.path.join(BASE_DIR, "CS.xlsx")
-
 # ============================================================================
 # SESSION STATE INITIALIZATION
 # ============================================================================
@@ -609,153 +604,111 @@ def normalize_issn(issn: Any) -> Optional[str]:
 @st.cache_data(show_spinner="Loading WoS database...")
 def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
     """
-    Load WoS database from IF.xlsx and create search indices.
-    Returns: (issn_to_data, normalized_issn_to_data)
+    Load WoS database from IF.xlsx
     """
-    if not os.path.exists(WOS_FILE):
-        st.warning(f"WoS database file {WOS_FILE} not found. WoS filtering will be disabled.")
+    if not os.path.exists('IF.xlsx'):
+        # Не показываем warning, просто возвращаем пустые словари
         return {}, {}
     
     try:
-        df = pd.read_excel(WOS_FILE)
+        df = pd.read_excel('IF.xlsx')
         
-        # Check required columns
-        required_cols = ['Name', 'ISSN', 'eISSN', 'IF', 'Quartile']
+        # Проверяем наличие необходимых колонок
+        required_cols = ['ISSN', 'IF', 'Quartile']
         if not all(col in df.columns for col in required_cols):
-            st.warning("WoS database missing required columns. WoS filtering will be disabled.")
             return {}, {}
         
         issn_to_data = {}
         normalized_to_data = {}
         
         for _, row in df.iterrows():
-            title = row.get('Name', '')
-            if_value = row.get('IF', 0)
-            quartile = row.get('Quartile', '')
-            
-            # Process ISSN
-            issn_raw = row.get('ISSN', '')
-            eissn_raw = row.get('eISSN', '')
-            
-            # Normalize and store both ISSN and eISSN
-            for raw_issn in [issn_raw, eissn_raw]:
-                if pd.notna(raw_issn) and raw_issn:
-                    # Store with original formatting
-                    issn_to_data[raw_issn] = {
-                        'title': title,
+            issn = str(row.get('ISSN', '')).strip()
+            if pd.notna(issn) and issn and issn.lower() != 'nan':
+                if_value = row.get('IF', 0)
+                quartile = row.get('Quartile', '')
+                
+                # Прямое сохранение без нормализации
+                issn_to_data[issn] = {
+                    'if': if_value,
+                    'quartile': quartile,
+                    'database': 'WoS'
+                }
+                
+                # Упрощенная нормализация (убираем дефисы)
+                norm_issn = issn.replace('-', '').strip()
+                if norm_issn:
+                    normalized_to_data[norm_issn] = {
                         'if': if_value,
                         'quartile': quartile,
                         'database': 'WoS'
                     }
-                    
-                    # Store normalized version (no hyphens, with leading zeros)
-                    normalized = normalize_issn(raw_issn)
-                    if normalized:
-                        if normalized not in normalized_to_data or \
-                           normalized_to_data[normalized].get('if', 0) < if_value:
-                            normalized_to_data[normalized] = {
-                                'title': title,
-                                'if': if_value,
-                                'quartile': quartile,
-                                'database': 'WoS'
-                            }
         
         return issn_to_data, normalized_to_data
         
     except Exception as e:
-        st.warning(f"Error loading WoS database: {str(e)}. WoS filtering will be disabled.")
+        # Не показываем ошибку пользователю
         return {}, {}
 
 @st.cache_data(show_spinner="Loading Scopus database...")
 def load_scopus_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
     """
-    Load Scopus database from CS.xlsx and create search indices.
-    Takes highest quartile for each journal.
-    Returns: (issn_to_data, normalized_issn_to_data)
+    Load Scopus database from CS.xlsx
     """
-    if not os.path.exists(SCOPUS_FILE):
-        st.warning(f"Scopus database file {SCOPUS_FILE} not found. Scopus filtering will be disabled.")
+    if not os.path.exists('CS.xlsx'):
         return {}, {}
     
     try:
-        df = pd.read_excel(SCOPUS_FILE)
+        df = pd.read_excel('CS.xlsx')
         
-        # Check required columns
-        required_cols = ['Title', 'Print ISSN', 'E-ISSN', 'CiteScore', 'Quartile']
+        # Проверяем наличие необходимых колонок
+        required_cols = ['Print ISSN', 'CiteScore', 'Quartile']
         if not all(col in df.columns for col in required_cols):
-            st.warning("Scopus database missing required columns. Scopus filtering will be disabled.")
             return {}, {}
         
-        # First, group by normalized ISSN to find highest quartile
-        temp_data = defaultdict(list)
+        issn_to_data = {}
+        normalized_to_data = {}
         
         for _, row in df.iterrows():
-            title = row.get('Title', '')
-            citescore = row.get('CiteScore', 0)
-            quartile_num = row.get('Quartile', 4)  # Default to Q4 if missing
-            
-            # Convert quartile number to Q1-Q4 format
-            if pd.notna(quartile_num):
-                try:
-                    quartile = f"Q{int(quartile_num)}"
-                except:
-                    quartile = "Q4"
-            else:
-                quartile = "Q4"
-            
-            # Process Print ISSN
-            print_issn_raw = row.get('Print ISSN', '')
-            eissn_raw = row.get('E-ISSN', '')
-            
-            for raw_issn in [print_issn_raw, eissn_raw]:
-                if pd.notna(raw_issn) and raw_issn:
-                    normalized = normalize_issn(raw_issn)
-                    if normalized:
-                        temp_data[normalized].append({
-                            'title': title,
-                            'citescore': citescore,
-                            'quartile': quartile,
-                            'quartile_num': int(quartile[1]) if quartile[1:].isdigit() else 4
-                        })
-        
-        # For each normalized ISSN, take the entry with highest quartile (lowest number)
-        normalized_to_data = {}
-        for norm_issn, entries in temp_data.items():
-            if entries:
-                # Find entry with highest quartile (lowest quartile number)
-                best_entry = min(entries, key=lambda x: x['quartile_num'])
-                normalized_to_data[norm_issn] = {
-                    'title': best_entry['title'],
-                    'citescore': best_entry['citescore'],
-                    'quartile': best_entry['quartile'],
+            issn = str(row.get('Print ISSN', '')).strip()
+            if pd.notna(issn) and issn and issn.lower() != 'nan':
+                citescore = row.get('CiteScore', 0)
+                quartile = row.get('Quartile', '')
+                
+                # Прямое сохранение
+                issn_to_data[issn] = {
+                    'citescore': citescore,
+                    'quartile': quartile,
                     'database': 'Scopus'
                 }
-        
-        # Also create mapping with original ISSN strings for exact matching
-        issn_to_data = {}
-        for _, row in df.iterrows():
-            title = row.get('Title', '')
-            citescore = row.get('CiteScore', 0)
-            
-            # Process Print ISSN
-            print_issn_raw = row.get('Print ISSN', '')
-            if pd.notna(print_issn_raw) and print_issn_raw:
-                normalized = normalize_issn(print_issn_raw)
-                if normalized and normalized in normalized_to_data:
-                    issn_to_data[print_issn_raw] = normalized_to_data[normalized]
-            
-            # Process E-ISSN
-            eissn_raw = row.get('E-ISSN', '')
-            if pd.notna(eissn_raw) and eissn_raw:
-                normalized = normalize_issn(eissn_raw)
-                if normalized and normalized in normalized_to_data:
-                    issn_to_data[eissn_raw] = normalized_to_data[normalized]
+                
+                # Упрощенная нормализация
+                norm_issn = issn.replace('-', '').strip()
+                if norm_issn:
+                    normalized_to_data[norm_issn] = {
+                        'citescore': citescore,
+                        'quartile': quartile,
+                        'database': 'Scopus'
+                    }
         
         return issn_to_data, normalized_to_data
         
     except Exception as e:
-        st.warning(f"Error loading Scopus database: {str(e)}. Scopus filtering will be disabled.")
         return {}, {}
+
+# Load databases at startup
+if 'wos_data' not in st.session_state:
+    wos_issn, wos_norm = load_wos_database()
+    st.session_state['wos_data'] = {
+        'issn_map': wos_issn,
+        'normalized_map': wos_norm
+    }
+
+if 'scopus_data' not in st.session_state:
+    scopus_issn, scopus_norm = load_scopus_database()
+    st.session_state['scopus_data'] = {
+        'issn_map': scopus_issn,
+        'normalized_map': scopus_norm
+    }
 
 # Load databases at startup
 if 'wos_data' not in st.session_state:
@@ -2993,6 +2946,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
