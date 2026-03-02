@@ -582,6 +582,36 @@ if 'search_performed' not in st.session_state:
 # DATABASE LOADING AND CACHING
 # ============================================================================
 
+def normalize_issn(issn: Any) -> Optional[str]:
+    """
+    Normalize ISSN to 8-digit format without hyphens.
+    Handles:
+    - With hyphens: 0007-9235 -> 00079235
+    - Without hyphens: 15299732 -> 15299732
+    - Shortened: 664308 -> 00664308
+    """
+    if pd.isna(issn) or not issn:
+        return None
+    
+    # Convert to string and remove any whitespace
+    issn_str = str(issn).strip()
+    
+    # Remove hyphens and spaces
+    clean = re.sub(r'[\s-]', '', issn_str)
+    
+    # If it's all digits, pad with leading zeros to 8 digits
+    if clean.isdigit():
+        if len(clean) < 8:
+            clean = clean.zfill(8)
+        if len(clean) == 8:
+            return clean
+    
+    # If it has X at the end (like some ISSNs), handle separately
+    if re.match(r'^\d{7}[\dX]$', clean):
+        return clean
+    
+    return None
+
 @st.cache_data(show_spinner="Loading WoS database...")
 def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
     """
@@ -783,36 +813,6 @@ def validate_year_range(years: List[int]) -> Tuple[bool, str]:
         return False, "Period cannot exceed 30 years (performance reasons)"
     
     return True, "Valid"
-
-def normalize_issn(issn: Any) -> Optional[str]:
-    """
-    Normalize ISSN to 8-digit format without hyphens.
-    Handles:
-    - With hyphens: 0007-9235 -> 00079235
-    - Without hyphens: 15299732 -> 15299732
-    - Shortened: 664308 -> 00664308
-    """
-    if pd.isna(issn) or not issn:
-        return None
-    
-    # Convert to string and remove any whitespace
-    issn_str = str(issn).strip()
-    
-    # Remove hyphens and spaces
-    clean = re.sub(r'[\s-]', '', issn_str)
-    
-    # If it's all digits, pad with leading zeros to 8 digits
-    if clean.isdigit():
-        if len(clean) < 8:
-            clean = clean.zfill(8)
-        if len(clean) == 8:
-            return clean
-    
-    # If it has X at the end (like some ISSNs), handle separately
-    if re.match(r'^\d{7}[\dX]$', clean):
-        return clean
-    
-    return None
 
 def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional[str], 
                              issn_list: List[str]) -> Tuple[Dict, Dict]:
@@ -2999,6 +2999,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
