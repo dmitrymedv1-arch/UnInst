@@ -505,6 +505,31 @@ def normalize_institution_name(name: str) -> str:
     name = name.replace('-', ' ')
     return name
 
+def is_latin_only(text: str) -> bool:
+    """Check if text contains only Latin characters, numbers, and common punctuation"""
+    if not text:
+        return False
+
+    pattern = r'^[A-Za-z0-9\s\.,\'\-\–\(\)]+$'
+    return bool(re.match(pattern, text.strip()))
+
+def filter_latin_names(names: List[str]) -> List[str]:
+    """Filter list of names to keep only those with Latin characters"""
+    return [name for name in names if is_latin_only(name)]
+
+def debug_author_names(authors: List[str], limit: int = 10):
+    """Debug function to see what author names are being filtered"""
+    latin = [a for a in authors if is_latin_only(a)]
+    non_latin = [a for a in authors if not is_latin_only(a)]
+    
+    print(f"Total authors: {len(authors)}")
+    print(f"Latin: {len(latin)}")
+    print(f"Non-Latin: {len(non_latin)}")
+    if non_latin:
+        print(f"Sample non-Latin names: {non_latin[:limit]}")
+    
+    return latin, non_latin
+
 def is_ror_id(text: str) -> bool:
     """Check if text is a valid ROR ID"""
     # ROR IDs are like: 0521rv456
@@ -885,7 +910,7 @@ def enrich_paper_data(paper: Dict) -> Dict:
         'validation': paper.get('_validation', {})
     }
     
-    # Authors
+    # Authors - фильтруем только латиницу
     authorships = paper.get('authorships', [])
     authors = []
     author_affiliations = []
@@ -895,9 +920,11 @@ def enrich_paper_data(paper: Dict) -> Dict:
         if authorship.get('author'):
             author_name = authorship['author'].get('display_name', '')
             if author_name:
-                authors.append(author_name)
+                # Проверяем, содержит ли имя только латиницу
+                if is_latin_only(author_name):
+                    authors.append(author_name)
                 
-                # Get affiliations for collaboration analysis
+                # Get affiliations for collaboration analysis (аффилиации могут быть на разных языках, оставляем)
                 institutions = authorship.get('institutions', [])
                 for inst in institutions:
                     if inst and inst.get('country_code'):
@@ -1002,7 +1029,7 @@ def analyze_papers(papers: List[Dict]) -> Dict:
             yearly_papers[year] += 1
             yearly_citations[year] += p['cited_by_count']
     
-    # Authors analysis
+    # Authors analysis - теперь уже с отфильтрованными авторами
     all_authors = []
     for p in enriched_papers:
         all_authors.extend(p.get('authors', []))
@@ -1217,8 +1244,26 @@ def plot_yearly_citations(yearly_citations: Dict[int, int], colors: Dict):
 
 def plot_top_authors(authors_data: List[Tuple[str, int]], colors: Dict):
     """Plot top authors"""
-    authors = [a[0][:30] + '...' if len(a[0]) > 30 else a[0] for a in authors_data[:15]]
-    counts = [a[1] for a in authors_data[:15]]
+    # Дополнительная фильтрация на всякий случай
+    filtered_authors = [(name, count) for name, count in authors_data if is_latin_only(name)]
+    
+    if not filtered_authors:
+        # Если после фильтрации нет данных, показываем заглушку
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No Latin author names available",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False
+        )
+        fig.update_layout(
+            title='Top Authors by Publication Count (Latin names only)',
+            template='plotly_white',
+            height=500
+        )
+        return fig
+    
+    authors = [a[0][:30] + '...' if len(a[0]) > 30 else a[0] for a in filtered_authors[:15]]
+    counts = [a[1] for a in filtered_authors[:15]]
     
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -1231,7 +1276,7 @@ def plot_top_authors(authors_data: List[Tuple[str, int]], colors: Dict):
     ))
     
     fig.update_layout(
-        title='Top Authors by Publication Count',
+        title='Top Authors by Publication Count (Latin names only)',
         xaxis_title='Number of Publications',
         yaxis_title='Author',
         template='plotly_white',
@@ -1446,17 +1491,21 @@ def plot_top_cited_table(papers: List[Dict], title: str, colors: Dict):
     if not papers:
         return None
     
-    df = pd.DataFrame([
-        {
+    rows = []
+    for p in papers[:20]:
+
+        latin_authors = filter_latin_names(p['authors'])
+        authors_str = ', '.join(latin_authors[:3]) + (' et al.' if len(latin_authors) > 3 else '')
+        
+        rows.append({
             'Title': p['title'][:80] + '...' if len(p['title']) > 80 else p['title'],
             'Citations': p['cited_by_count'],
             'Year': p['publication_year'],
-            'Authors': ', '.join(p['authors'][:3]) + (' et al.' if len(p['authors']) > 3 else ''),
+            'Authors': authors_str,
             'Journal': p['journal'][:30] + '...' if len(p['journal']) > 30 else p['journal']
-        }
-        for p in papers[:20]
-    ])
+        })
     
+    df = pd.DataFrame(rows)
     return df
 
 def create_validation_summary(validation_stats: Dict, colors: Dict):
@@ -2045,7 +2094,7 @@ def main():
         export_df = pd.DataFrame([
             {
                 'Title': p['title'],
-                'Authors': ', '.join(p['authors']),
+                'Authors': ', '.join(filter_latin_names(p['authors'])),  # Фильтруем здесь
                 'Year': p['publication_year'],
                 'Journal': p['journal'],
                 'Publisher': p['publisher'],
@@ -2161,6 +2210,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
