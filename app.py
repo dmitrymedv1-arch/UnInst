@@ -1451,6 +1451,12 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
             first_date_obj = crossref_data[doi_lower].get('first_date', {})
             final_date_obj = crossref_data[doi_lower].get('final_date', {})
             
+            # Ensure we have valid objects
+            if not first_date_obj:
+                first_date_obj = {}
+            if not final_date_obj:
+                final_date_obj = {}
+            
             # Use final date year for filtering (this is the print publication year)
             filter_year = final_date_obj.get('year') if final_date_obj else crossref_data[doi_lower].get('year')
             
@@ -1458,7 +1464,7 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
             openalex_date = paper.get('publication_date', '')
             
             # STORE THE ORIGINAL DATE OBJECTS, NOT STRINGS
-            paper['_validation'] = {
+            validation_data = {
                 'source': 'crossref',
                 'year': filter_year,
                 'original_year': paper.get('publication_year'),
@@ -1476,6 +1482,19 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
                 'is_referenced_by_count': crossref_data[doi_lower].get('is_referenced_by_count', 0),
                 'references_count': crossref_data[doi_lower].get('references_count', 0)
             }
+            
+            # Add formatted dates directly to validation for debugging
+            if first_date_obj:
+                validation_data['first_date_str'] = f"{first_date_obj.get('year', '')}-{first_date_obj.get('month', 1):02d}-{first_date_obj.get('day', 1):02d}"
+            else:
+                validation_data['first_date_str'] = ''
+                
+            if final_date_obj:
+                validation_data['final_date_str'] = f"{final_date_obj.get('year', '')}-{final_date_obj.get('month', 1):02d}-{final_date_obj.get('day', 1):02d}"
+            else:
+                validation_data['final_date_str'] = validation_data.get('first_date_str', '')
+            
+            paper['_validation'] = validation_data
             
             # Update publication year to filter_year for consistency
             paper['publication_year'] = filter_year
@@ -1581,24 +1600,61 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
     # Check WoS and Scopus indexing using all available ISSNs
     wos_info, scopus_info = check_issn_in_databases(issn_print, issn_electronic, issn_list)
     
-    # Format dates for display
+    # Format dates for display - use validation data if available
     first_date_display = ''
     final_date_display = ''
+    first_date_source = ''
+    final_date_source = ''
     
     validation = paper.get('_validation', {})
-    if validation.get('first_date_obj'):
-        fd = validation['first_date_obj']
-        first_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
     
-    if validation.get('final_date_obj'):
-        fd = validation['final_date_obj']
-        final_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
-    elif not final_date_display and validation.get('first_date_obj'):
-        # Fallback to first_date if no final_date
-        fd = validation['first_date_obj']
-        final_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
-    else:
+    # Method 1: Try to get from validation fields (new approach)
+    if validation:
+        # Try to get first_date_str directly (added in updated filter function)
+        if 'first_date_str' in validation and validation['first_date_str']:
+            first_date_display = validation['first_date_str']
+            first_date_source = validation.get('first_date_source', '')
+        
+        # Try to get final_date_str directly
+        if 'final_date_str' in validation and validation['final_date_str']:
+            final_date_display = validation['final_date_str']
+            final_date_source = validation.get('final_date_source', '')
+        
+        # If we have date objects but no formatted strings, create them
+        if not first_date_display and validation.get('first_date_obj'):
+            fd = validation['first_date_obj']
+            if fd and isinstance(fd, dict):
+                first_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
+                first_date_source = validation.get('first_date_source', fd.get('source', ''))
+        
+        if not final_date_display and validation.get('final_date_obj'):
+            fd = validation['final_date_obj']
+            if fd and isinstance(fd, dict):
+                final_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
+                final_date_source = validation.get('final_date_source', fd.get('source', ''))
+    
+    # Method 2: If still no dates, try from crossref_data directly
+    if not first_date_display and crossref_data and doi_lower in crossref_data:
+        cr_data = crossref_data[doi_lower]
+        if cr_data.get('first_date'):
+            fd = cr_data['first_date']
+            if fd and isinstance(fd, dict):
+                first_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
+                first_date_source = fd.get('source', '')
+    
+    if not final_date_display and crossref_data and doi_lower in crossref_data:
+        cr_data = crossref_data[doi_lower]
+        if cr_data.get('final_date'):
+            fd = cr_data['final_date']
+            if fd and isinstance(fd, dict):
+                final_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
+                final_date_source = fd.get('source', '')
+    
+    # Method 3: Fallback to OpenAlex date
+    if not final_date_display:
         final_date_display = paper.get('publication_date', '')
+        if not final_date_display and first_date_display:
+            final_date_display = first_date_display
     
     enriched = {
         'id': paper.get('id', ''),
@@ -1614,6 +1670,8 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
         # Add formatted dates for easy access in export
         'first_date_formatted': first_date_display,
         'final_date_formatted': final_date_display,
+        'first_date_source': first_date_source,
+        'final_date_source': final_date_source,
         'publisher_oa': publisher_oa,
         'publisher_crossref': publisher_crossref,
         'publisher': publisher_crossref or publisher_oa or 'Unknown',
@@ -3215,8 +3273,8 @@ def main():
                 'DOI': p['doi'],
                 'First Date': p.get('first_date_formatted', ''),
                 'Final Date': p.get('final_date_formatted', ''),
-                'First Date Source': p.get('validation', {}).get('first_date_source', '') if p.get('validation') else '',
-                'Final Date Source': p.get('validation', {}).get('final_date_source', '') if p.get('validation') else '',
+                'First Date Source': p.get('first_date_source', ''),
+                'Final Date Source': p.get('final_date_source', ''),
                 'Authors': '; '.join(p['authors']),
                 'Title': p['title'],
                 'Journal': p['journal'],
@@ -3335,6 +3393,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
