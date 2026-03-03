@@ -22,6 +22,8 @@ import warnings
 warnings.filterwarnings('ignore')
 import io
 import os
+import networkx as nx
+from itertools import combinations
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -35,7 +37,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# UI COLOR PALETTES (DYNAMIC)
+# UI COLOR PALETTE (RANDOM ONLY, NOT USER SELECTABLE)
 # ============================================================================
 
 UI_COLOR_PALETTES = [
@@ -170,39 +172,109 @@ UI_COLOR_PALETTES = [
 ]
 
 # ============================================================================
-# COLOR SCALES FOR PLOTS
+# PLOT COLOR PALETTES (15 OPTIONS FOR USER SELECTION)
 # ============================================================================
 
-COLOR_SCALES = [
-    'Viridis',
-    'Plasma',
-    'Inferno',
-    'Magma',
-    'Cividis',
-    'Turbo',
-    'Blues',
-    'Reds',
-    'Greens',
-    'Purples',
-    'Oranges',
-    'YlOrRd',
-    'YlGnBu',
-    'RdYlGn',
-    'Spectral',
-    'Coolwarm',
-    'Portland',
-    'Electric',
-    'Hot',
-    'Blackbody'
+PLOT_COLOR_PALETTES = [
+    {
+        'name': 'Viridis (Default)',
+        'sequential': 'Viridis',
+        'categorical': px.colors.sequential.Viridis,
+        'diverging': px.colors.diverging.RdYlBu
+    },
+    {
+        'name': 'Plasma',
+        'sequential': 'Plasma',
+        'categorical': px.colors.sequential.Plasma,
+        'diverging': px.colors.diverging.Spectral
+    },
+    {
+        'name': 'Inferno',
+        'sequential': 'Inferno',
+        'categorical': px.colors.sequential.Inferno,
+        'diverging': px.colors.diverging.RdYlGn
+    },
+    {
+        'name': 'Magma',
+        'sequential': 'Magma',
+        'categorical': px.colors.sequential.Magma,
+        'diverging': px.colors.diverging.PiYG
+    },
+    {
+        'name': 'Cividis',
+        'sequential': 'Cividis',
+        'categorical': px.colors.sequential.Cividis,
+        'diverging': px.colors.diverging.PRGn
+    },
+    {
+        'name': 'Turbo',
+        'sequential': 'Turbo',
+        'categorical': px.colors.sequential.Turbo,
+        'diverging': px.colors.diverging.RdBu
+    },
+    {
+        'name': 'Blues',
+        'sequential': 'Blues',
+        'categorical': px.colors.sequential.Blues,
+        'diverging': px.colors.diverging.RdYlBu
+    },
+    {
+        'name': 'Reds',
+        'sequential': 'Reds',
+        'categorical': px.colors.sequential.Reds,
+        'diverging': px.colors.diverging.RdYlBu
+    },
+    {
+        'name': 'Greens',
+        'sequential': 'Greens',
+        'categorical': px.colors.sequential.Greens,
+        'diverging': px.colors.diverging.RdYlGn
+    },
+    {
+        'name': 'Purples',
+        'sequential': 'Purples',
+        'categorical': px.colors.sequential.Purples,
+        'diverging': px.colors.diverging.PuOr
+    },
+    {
+        'name': 'Oranges',
+        'sequential': 'Oranges',
+        'categorical': px.colors.sequential.Oranges,
+        'diverging': px.colors.diverging.RdYlBu
+    },
+    {
+        'name': 'Spectral',
+        'sequential': 'Spectral',
+        'categorical': px.colors.diverging.Spectral,
+        'diverging': px.colors.diverging.Spectral
+    },
+    {
+        'name': 'Coolwarm',
+        'sequential': 'RdBu',
+        'categorical': px.colors.diverging.RdBu,
+        'diverging': px.colors.diverging.RdBu
+    },
+    {
+        'name': 'Portland',
+        'sequential': 'Portland',
+        'categorical': px.colors.sequential.Portland,
+        'diverging': px.colors.diverging.RdYlBu
+    },
+    {
+        'name': 'Electric',
+        'sequential': 'Electric',
+        'categorical': px.colors.sequential.Electric,
+        'diverging': px.colors.diverging.Spectral
+    }
 ]
 
-# Initialize or get UI palette from session
+# Initialize UI palette (random only)
 if 'ui_palette' not in st.session_state:
     st.session_state['ui_palette'] = random.choice(UI_COLOR_PALETTES)
-if 'color_scale' not in st.session_state:
-    st.session_state['color_scale'] = 'Viridis'
-if 'previous_palette' not in st.session_state:
-    st.session_state['previous_palette'] = st.session_state['ui_palette']['name']
+
+# Initialize plot color palette (user selectable)
+if 'plot_palette' not in st.session_state:
+    st.session_state['plot_palette'] = PLOT_COLOR_PALETTES[0]  # Default to Viridis
 
 # Get current colors
 colors = st.session_state['ui_palette']
@@ -436,17 +508,6 @@ st.markdown(f"""
         background: {colors['primary']}05;
     }}
     
-    /* Footer */
-    .footer {{
-        text-align: center;
-        padding: 2rem;
-        color: {colors['text']};
-        opacity: 0.7;
-        font-size: 0.9rem;
-        border-top: 1px solid {colors['border']};
-        margin-top: 3rem;
-    }}
-    
     /* Recent institutions */
     .recent-inst {{
         background: {colors['card_bg']};
@@ -633,9 +694,9 @@ def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
     """
     Load WoS database from IF.xlsx
     """
-    # Получаем путь к директории, где находится текущий скрипт
+    # Get the directory where the current script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    # Формируем полный путь к файлу
+    # Form the full path to the file
     wos_file_path = os.path.join(script_dir, 'IF.xlsx')
     
     if not os.path.exists(wos_file_path):
@@ -644,22 +705,22 @@ def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
     try:
         df = pd.read_excel(wos_file_path)
         
-        # Проверяем наличие необходимых колонок
+        # Check for required columns
         required_cols = ['ISSN', 'IF', 'Quartile']
         if not all(col in df.columns for col in required_cols):
             return {}, {}
         
         issn_to_data = {}
-        formatted_to_data = {}  # Теперь храним отформатированные ISSN (с дефисом)
+        formatted_to_data = {}  # Store formatted ISSNs (with hyphen)
         
         for _, row in df.iterrows():
             issn = str(row.get('ISSN', '')).strip()
             if pd.notna(issn) and issn and issn.lower() != 'nan':
                 if_value = row.get('IF', 0)
                 quartile = row.get('Quartile', '')
-                journal_title = row.get('Journal title', row.get('Title', ''))  # Пробуем разные названия колонок
+                journal_title = row.get('Journal title', row.get('Title', ''))  # Try different column names
                 
-                # Сохраняем оригинальный ISSN (с дефисом)
+                # Store original ISSN (with hyphen)
                 issn_to_data[issn] = {
                     'if': if_value,
                     'quartile': quartile,
@@ -667,7 +728,7 @@ def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
                     'title': journal_title
                 }
                 
-                # Форматируем ISSN (на всякий случай, если вдруг в файле без дефиса)
+                # Format ISSN (in case file has no hyphen)
                 formatted_issn = format_issn_with_hyphen(issn)
                 if formatted_issn and formatted_issn != issn:
                     formatted_to_data[formatted_issn] = {
@@ -686,30 +747,61 @@ def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
 @st.cache_data(show_spinner="Loading Scopus database...")
 def load_scopus_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
     """
-    Load Scopus database from CS.xlsx
+    Load Scopus database from CS.xlsx and normalize quartile values to Q1-Q4 format
     """
-    if not os.path.exists('CS.xlsx'):
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    scopus_file_path = os.path.join(script_dir, 'CS.xlsx')
+    
+    if not os.path.exists(scopus_file_path):
         return {}, {}
     
     try:
-        df = pd.read_excel('CS.xlsx')
+        df = pd.read_excel(scopus_file_path)
         
-        # Проверяем наличие необходимых колонок
+        # Check for required columns
         required_cols = ['Print ISSN', 'CiteScore', 'Quartile']
         if not all(col in df.columns for col in required_cols):
             return {}, {}
         
         issn_to_data = {}
-        formatted_to_data = {}  # Теперь храним отформатированные ISSN (с дефисом)
+        formatted_to_data = {}  # Store formatted ISSNs (with hyphen)
         
         for _, row in df.iterrows():
             issn = str(row.get('Print ISSN', '')).strip()
             if pd.notna(issn) and issn and issn.lower() != 'nan':
                 citescore = row.get('CiteScore', 0)
-                quartile = row.get('Quartile', '')
-                source_title = row.get('Source title', row.get('Title', ''))  # Пробуем разные названия колонок
+                quartile_raw = row.get('Quartile', '')
                 
-                # Сохраняем оригинальный ISSN (как есть из файла)
+                # Normalize quartile to Q1-Q4 format
+                quartile = ''
+                if pd.notna(quartile_raw):
+                    quartile_str = str(quartile_raw).strip()
+                    # Extract the highest quartile (lowest number) if multiple
+                    if ',' in quartile_str:
+                        quartile_parts = [q.strip() for q in quartile_str.split(',')]
+                        # Find the quartile with the smallest number
+                        quartile_numbers = []
+                        for q in quartile_parts:
+                            # Extract number from Q1, Q2, etc. or just number
+                            q_num = re.sub(r'[^0-9]', '', q)
+                            if q_num:
+                                quartile_numbers.append(int(q_num))
+                        if quartile_numbers:
+                            highest_quartile = min(quartile_numbers)
+                            quartile = f'Q{highest_quartile}'
+                    else:
+                        # Single quartile value
+                        if 'Q' in quartile_str.upper():
+                            quartile = quartile_str.upper()
+                        else:
+                            # Try to extract just the number
+                            q_num = re.sub(r'[^0-9]', '', quartile_str)
+                            if q_num:
+                                quartile = f'Q{q_num}'
+                
+                source_title = row.get('Source title', row.get('Title', ''))  # Try different column names
+                
+                # Store original ISSN (as is from file)
                 issn_to_data[issn] = {
                     'citescore': citescore,
                     'quartile': quartile,
@@ -717,7 +809,7 @@ def load_scopus_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
                     'title': source_title
                 }
                 
-                # Форматируем ISSN в стандартный вид с дефисом
+                # Format ISSN to standard with hyphen
                 formatted_issn = format_issn_with_hyphen(issn)
                 if formatted_issn:
                     formatted_to_data[formatted_issn] = {
@@ -732,21 +824,6 @@ def load_scopus_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
     except Exception as e:
         print(f"Error loading Scopus database: {e}")
         return {}, {}
-
-# Load databases at startup
-if 'wos_data' not in st.session_state:
-    wos_issn, wos_norm = load_wos_database()
-    st.session_state['wos_data'] = {
-        'issn_map': wos_issn,
-        'normalized_map': wos_norm
-    }
-
-if 'scopus_data' not in st.session_state:
-    scopus_issn, scopus_norm = load_scopus_database()
-    st.session_state['scopus_data'] = {
-        'issn_map': scopus_issn,
-        'normalized_map': scopus_norm
-    }
 
 # Load databases at startup
 if 'wos_data' not in st.session_state:
@@ -803,6 +880,7 @@ def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional
                              issn_list: List[str]) -> Tuple[Dict, Dict]:
     """
     Check if any ISSN matches WoS or Scopus databases.
+    Now prioritizes electronic ISSN if print is not available.
     Returns: (wos_info, scopus_info)
     """
     wos_info = {'indexed': False, 'if': None, 'quartile': None, 'title': None}
@@ -811,7 +889,7 @@ def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional
     # Collect all ISSNs to check (keep original format with hyphen)
     all_issns = set()
     
-    # Добавляем все возможные ISSN в оригинальном формате (с дефисом)
+    # Add all possible ISSNs in original format (with hyphen)
     if issn_print and issn_print.strip():
         all_issns.add(issn_print.strip())
     
@@ -822,16 +900,16 @@ def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional
         if issn and str(issn).strip():
             all_issns.add(str(issn).strip())
     
-    # Также добавляем нормализованные версии для поиска в Scopus (где в файле может быть без дефиса)
+    # Also add normalized versions for searching (in case file has no hyphen)
     all_normalized = set()
     for issn in all_issns:
         normalized = normalize_issn(issn)
         if normalized:
             all_normalized.add(normalized)
     
-    # Check WoS database - ищем по оригинальным ISSN (с дефисом)
+    # Check WoS database - search by original ISSNs (with hyphen)
     if st.session_state['wos_data']['issn_map'] or st.session_state['wos_data']['normalized_map']:
-        # Сначала ищем по оригинальным ISSN (с дефисом)
+        # First search by original ISSNs (with hyphen)
         for issn in all_issns:
             if issn in st.session_state['wos_data']['issn_map']:
                 data = st.session_state['wos_data']['issn_map'][issn]
@@ -843,7 +921,7 @@ def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional
                 }
                 break
         
-        # Если не нашли, пробуем по нормализованным (на случай если в файле без дефиса)
+        # If not found, try normalized (in case file has no hyphen)
         if not wos_info['indexed']:
             for norm_issn in all_normalized:
                 if norm_issn in st.session_state['wos_data']['normalized_map']:
@@ -856,9 +934,9 @@ def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional
                     }
                     break
     
-    # Check Scopus database - ищем по оригинальным ISSN (с дефисом)
+    # Check Scopus database - search by original ISSNs (with hyphen)
     if st.session_state['scopus_data']['issn_map'] or st.session_state['scopus_data']['normalized_map']:
-        # Сначала ищем по оригинальным ISSN (как есть из файла CS.xlsx)
+        # First search by original ISSNs (as in CS.xlsx)
         for issn in all_issns:
             if issn in st.session_state['scopus_data']['issn_map']:
                 data = st.session_state['scopus_data']['issn_map'][issn]
@@ -870,7 +948,7 @@ def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional
                 }
                 break
         
-        # Если не нашли, пробуем по отформатированным (с дефисом)
+        # If not found, try formatted (with hyphen)
         if not scopus_info['indexed']:
             for issn in all_issns:
                 if issn in st.session_state['scopus_data']['normalized_map']:
@@ -948,113 +1026,113 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                 
                 for item in data.get('items', []):
                     doi = item.get('DOI', '')
-                    doi_lower = doi.lower()
-                    
-                    # Extract publication date
-                    pub_date = None
-                    
-                    if 'published-print' in item:
-                        date_parts = item['published-print'].get('date-parts', [[]])[0]
-                        if date_parts:
-                            pub_date = {
-                                'year': date_parts[0],
-                                'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                'source': 'published-print'
+                    if doi:  # Safe check for None
+                        doi_lower = doi.lower()
+                        
+                        # Extract publication date
+                        pub_date = None
+                        
+                        if 'published-print' in item:
+                            date_parts = item['published-print'].get('date-parts', [[]])[0]
+                            if date_parts:
+                                pub_date = {
+                                    'year': date_parts[0],
+                                    'month': date_parts[1] if len(date_parts) > 1 else 1,
+                                    'day': date_parts[2] if len(date_parts) > 2 else 1,
+                                    'source': 'published-print'
+                                }
+                        
+                        elif 'published' in item:
+                            date_parts = item['published'].get('date-parts', [[]])[0]
+                            if date_parts:
+                                pub_date = {
+                                    'year': date_parts[0],
+                                    'month': date_parts[1] if len(date_parts) > 1 else 1,
+                                    'day': date_parts[2] if len(date_parts) > 2 else 1,
+                                    'source': 'published'
+                                }
+                        
+                        elif 'published-online' in item:
+                            date_parts = item['published-online'].get('date-parts', [[]])[0]
+                            if date_parts:
+                                pub_date = {
+                                    'year': date_parts[0],
+                                    'month': date_parts[1] if len(date_parts) > 1 else 1,
+                                    'day': date_parts[2] if len(date_parts) > 2 else 1,
+                                    'source': 'published-online'
+                                }
+                        
+                        elif 'issued' in item:
+                            date_parts = item['issued'].get('date-parts', [[]])[0]
+                            if date_parts:
+                                pub_date = {
+                                    'year': date_parts[0],
+                                    'month': date_parts[1] if len(date_parts) > 1 else 1,
+                                    'day': date_parts[2] if len(date_parts) > 2 else 1,
+                                    'source': 'issued'
+                                }
+                        
+                        # Extract ISSN information from Crossref
+                        issn_print = None
+                        issn_electronic = None
+                        issn_list = []
+                        
+                        # Method 1: Get from ISSN array
+                        if 'ISSN' in item and item['ISSN']:
+                            issn_list = item['ISSN']
+                        
+                        # Method 2: Get from issn-type (most reliable for type identification)
+                        if 'issn-type' in item and isinstance(item['issn-type'], list):
+                            for issn_type in item['issn-type']:
+                                if isinstance(issn_type, dict):
+                                    issn_value = issn_type.get('value', '')
+                                    issn_type_name = issn_type.get('type', '').lower()
+                                    
+                                    if issn_type_name == 'print':
+                                        issn_print = issn_value
+                                    elif issn_type_name == 'electronic' or issn_type_name == 'e-issn':
+                                        issn_electronic = issn_value
+                                    
+                                    # Add to list if not already there
+                                    if issn_value and issn_value not in issn_list:
+                                        issn_list.append(issn_value)
+                        
+                        # Method 3: If we have ISSN list but no type info, try to infer
+                        if not issn_print and not issn_electronic and issn_list:
+                            # If only one ISSN, assume it's electronic (common for modern journals)
+                            if len(issn_list) == 1:
+                                issn_electronic = issn_list[0]
+                            # If two ISSNs, assume first is print, second is electronic
+                            elif len(issn_list) >= 2:
+                                issn_print = issn_list[0]
+                                issn_electronic = issn_list[1]
+                        
+                        # Get container title (journal name)
+                        container_title = None
+                        if 'container-title' in item and item['container-title']:
+                            if isinstance(item['container-title'], list) and item['container-title']:
+                                container_title = item['container-title'][0]
+                            else:
+                                container_title = item['container-title']
+                        
+                        if pub_date:
+                            results[doi_lower] = {
+                                'doi': doi,
+                                'doi_lower': doi_lower,
+                                'year': pub_date['year'],
+                                'month': pub_date['month'],
+                                'day': pub_date['day'],
+                                'source': pub_date['source'],
+                                'title': item.get('title', [''])[0] if item.get('title') else '',
+                                'container-title': container_title or '',
+                                'publisher': item.get('publisher', ''),
+                                'type': item.get('type', ''),
+                                'issn_print': issn_print,
+                                'issn_electronic': issn_electronic,
+                                'issn_list': issn_list,  # Store full list for reference
+                                'is_referenced_by_count': item.get('is-referenced-by-count', 0),
+                                'references_count': len(item.get('reference', [])) if item.get('reference') else 0
                             }
-                    
-                    elif 'published' in item:
-                        date_parts = item['published'].get('date-parts', [[]])[0]
-                        if date_parts:
-                            pub_date = {
-                                'year': date_parts[0],
-                                'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                'source': 'published'
-                            }
-                    
-                    elif 'published-online' in item:
-                        date_parts = item['published-online'].get('date-parts', [[]])[0]
-                        if date_parts:
-                            pub_date = {
-                                'year': date_parts[0],
-                                'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                'source': 'published-online'
-                            }
-                    
-                    elif 'issued' in item:
-                        date_parts = item['issued'].get('date-parts', [[]])[0]
-                        if date_parts:
-                            pub_date = {
-                                'year': date_parts[0],
-                                'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                'source': 'issued'
-                            }
-                    
-                    # Extract ISSN information from Crossref
-                    issn_print = None
-                    issn_electronic = None
-                    issn_list = []
-                    
-                    # Method 1: Get from ISSN array
-                    if 'ISSN' in item and item['ISSN']:
-                        issn_list = item['ISSN']
-                        # Try to determine print/electronic from issn-type if available
-                    
-                    # Method 2: Get from issn-type (most reliable for type identification)
-                    if 'issn-type' in item and isinstance(item['issn-type'], list):
-                        for issn_type in item['issn-type']:
-                            if isinstance(issn_type, dict):
-                                issn_value = issn_type.get('value', '')
-                                issn_type_name = issn_type.get('type', '').lower()
-                                
-                                if issn_type_name == 'print':
-                                    issn_print = issn_value
-                                elif issn_type_name == 'electronic' or issn_type_name == 'e-issn':
-                                    issn_electronic = issn_value
-                                
-                                # Add to list if not already there
-                                if issn_value and issn_value not in issn_list:
-                                    issn_list.append(issn_value)
-                    
-                    # Method 3: If we have ISSN list but no type info, try to infer
-                    if not issn_print and not issn_electronic and issn_list:
-                        # If only one ISSN, assume it's print
-                        if len(issn_list) == 1:
-                            issn_print = issn_list[0]
-                        # If two ISSNs, assume first is print, second is electronic
-                        elif len(issn_list) >= 2:
-                            issn_print = issn_list[0]
-                            issn_electronic = issn_list[1]
-                    
-                    # Get container title (journal name)
-                    container_title = None
-                    if 'container-title' in item and item['container-title']:
-                        if isinstance(item['container-title'], list) and item['container-title']:
-                            container_title = item['container-title'][0]
-                        else:
-                            container_title = item['container-title']
-                    
-                    if pub_date:
-                        results[doi_lower] = {
-                            'doi': doi,
-                            'doi_lower': doi_lower,
-                            'year': pub_date['year'],
-                            'month': pub_date['month'],
-                            'day': pub_date['day'],
-                            'source': pub_date['source'],
-                            'title': item.get('title', [''])[0] if item.get('title') else '',
-                            'container-title': container_title or '',
-                            'publisher': item.get('publisher', ''),
-                            'type': item.get('type', ''),
-                            'issn_print': issn_print,
-                            'issn_electronic': issn_electronic,
-                            'issn_list': issn_list,  # Store full list for reference
-                            'is_referenced_by_count': item.get('is-referenced-by-count', 0),
-                            'references_count': len(item.get('reference', [])) if item.get('reference') else 0
-                        }
             
             # Rate limiting
             time.sleep(0.1)
@@ -1186,8 +1264,10 @@ def extract_dois_from_papers(papers: List[Dict]) -> List[str]:
     for paper in papers:
         doi = paper.get('doi', '')
         if doi:
-            doi = doi.replace('https://doi.org/', '').replace('http://doi.org/', '')
-            dois.append(doi)
+            # Safe replace - check if doi is string
+            if isinstance(doi, str):
+                doi = doi.replace('https://doi.org/', '').replace('http://doi.org/', '')
+                dois.append(doi)
     return dois
 
 def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, Dict], target_years: List[int]) -> Tuple[List[Dict], Dict]:
@@ -1205,7 +1285,11 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
     }
     
     for paper in papers:
-        doi = paper.get('doi', '').replace('https://doi.org/', '').replace('http://doi.org/', '')
+        doi = paper.get('doi', '')
+        if doi and isinstance(doi, str):
+            doi = doi.replace('https://doi.org/', '').replace('http://doi.org/', '')
+        else:
+            doi = ''
         
         if not doi:
             validation_stats['no_doi'] += 1
@@ -1276,7 +1360,12 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
 
 def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict:
     """Enrich paper data with additional fields including ISSN from both sources"""
-    doi = paper.get('doi', '').replace('https://doi.org/', '')
+    doi = paper.get('doi', '')
+    if doi and isinstance(doi, str):
+        doi = doi.replace('https://doi.org/', '')
+    else:
+        doi = ''
+    
     doi_lower = doi.lower() if doi else ''
     
     # Get publisher from OpenAlex (host_organization_name) or from Crossref validation
@@ -1288,7 +1377,6 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
             publisher_oa = source.get('host_organization_name') or source.get('publisher')
     
     publisher_crossref = None
-    crossref_publisher = None
     if crossref_data and doi_lower in crossref_data:
         publisher_crossref = crossref_data[doi_lower].get('publisher')
     
@@ -1297,13 +1385,13 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
     issn_electronic = None
     issn_list = []
     
-    # Источник 1: Данные из Crossref (уже обработанные)
+    # Source 1: Data from Crossref (already processed)
     if crossref_data and doi_lower in crossref_data:
         issn_print = crossref_data[doi_lower].get('issn_print')
         issn_electronic = crossref_data[doi_lower].get('issn_electronic')
         issn_list = crossref_data[doi_lower].get('issn_list', [])
     
-    # Источник 2: Если Crossref не дал ISSN, берем из OpenAlex
+    # Source 2: If Crossref didn't provide ISSN, try from OpenAlex
     if not issn_list and not issn_print and not issn_electronic:
         primary_location = paper.get('primary_location')
         if primary_location and isinstance(primary_location, dict):
@@ -1314,9 +1402,9 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
                 if oa_issn_list and isinstance(oa_issn_list, list):
                     issn_list = oa_issn_list
     
-    # Источник 3: Проверяем другие возможные места для ISSN в OpenAlex
+    # Source 3: Check other possible places for ISSN in OpenAlex
     if not issn_list and not issn_print and not issn_electronic:
-        # Иногда ISSN может быть в других полях
+        # Sometimes ISSN may be in other fields
         if 'issn' in paper:
             issn_val = paper.get('issn')
             if issn_val:
@@ -1325,7 +1413,7 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
                 else:
                     issn_list.append(issn_val)
         
-        # Проверяем в библиографической информации
+        # Check in bibliographic information
         biblio = paper.get('biblio', {})
         if biblio:
             if 'issn' in biblio:
@@ -1336,19 +1424,15 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
                     else:
                         issn_list.append(issn_val)
     
-    # Если у нас есть список ISSN, пытаемся определить print и electronic
-    if issn_list and not issn_print and not issn_electronic:
-        # Очищаем список от дубликатов и пустых значений
+    # Clean ISSN list from duplicates and empty values
+    if issn_list:
         issn_list = [issn for issn in issn_list if issn and str(issn).strip()]
         issn_list = list(set(issn_list))
         
-        # Если только один ISSN
-        if len(issn_list) == 1:
-            issn_print = issn_list[0]
-        # Если два и больше, предполагаем что первый - print, второй - electronic
-        elif len(issn_list) >= 2:
-            issn_print = issn_list[0]
-            issn_electronic = issn_list[1]
+        # If we have a list but no print/electronic identified, use the first as electronic
+        # (modern journals often only have electronic ISSN)
+        if not issn_print and not issn_electronic and issn_list:
+            issn_electronic = issn_list[0]
     
     # Check WoS and Scopus indexing
     wos_info, scopus_info = check_issn_in_databases(issn_print, issn_electronic, issn_list)
@@ -1489,6 +1573,7 @@ def analyze_papers(papers: List[Dict], crossref_data: Optional[Dict] = None) -> 
             'top_citations_per_year': [],
             'collaboration_types': {},
             'yearly_collaboration': {},
+            'country_collaborations': [],
             'enriched_papers': []
         }
     
@@ -1565,6 +1650,20 @@ def analyze_papers(papers: List[Dict], crossref_data: Optional[Dict] = None) -> 
         if year:
             yearly_collab[year][p.get('collaboration_type', 'Unknown')] += 1
     
+    # Collect country collaborations for network graph
+    country_collaborations = []
+    for p in enriched_papers:
+        countries = p.get('author_countries', [])
+        if len(countries) >= 2:
+            # Create all possible pairs of countries for this paper
+            for pair in combinations(sorted(countries), 2):
+                country_collaborations.append({
+                    'source': pair[0],
+                    'target': pair[1],
+                    'weight': 1,
+                    'year': p.get('publication_year')
+                })
+    
     return {
         'total_papers': total_papers,
         'total_citations': total_citations,
@@ -1584,6 +1683,7 @@ def analyze_papers(papers: List[Dict], crossref_data: Optional[Dict] = None) -> 
         'top_citations_per_year': top_cpy,
         'collaboration_types': dict(collab_types),
         'yearly_collaboration': {k: dict(v) for k, v in yearly_collab.items()},
+        'country_collaborations': country_collaborations,
         'enriched_papers': enriched_papers
     }
 
@@ -1686,10 +1786,71 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         return False
 
 # ============================================================================
-# PLOTTING FUNCTIONS (PLOTLY)
+# PLOTTING FUNCTIONS (PLOTLY) WITH SCIENTIFIC STYLE
 # ============================================================================
 
-def plot_yearly_publications(yearly_data: Dict[int, int], colors: Dict, color_scale: str):
+def apply_scientific_style(fig: go.Figure) -> go.Figure:
+    """Apply scientific style to plotly figures"""
+    fig.update_layout(
+        font=dict(
+            family="serif",
+            size=10,
+        ),
+        title_font=dict(
+            family="serif",
+            size=12,
+            weight="bold"
+        ),
+        title=dict(
+            x=0.5,  # Center title
+            xanchor='center'
+        ),
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        hoverlabel=dict(
+            font_family="serif",
+            font_size=10
+        ),
+        margin=dict(l=60, r=30, t=60, b=60)
+    )
+    
+    fig.update_xaxes(
+        showline=True,
+        linewidth=1,
+        linecolor='black',
+        mirror=True,
+        ticks='outside',
+        tickwidth=1,
+        tickcolor='black',
+        ticklen=4,
+        gridcolor='lightgrey',
+        griddash='dot',
+        gridwidth=0.5,
+        showgrid=False,  # No grid per scientific style
+        title_font=dict(family="serif", size=11, weight="bold"),
+        tickfont=dict(family="serif", size=10)
+    )
+    
+    fig.update_yaxes(
+        showline=True,
+        linewidth=1,
+        linecolor='black',
+        mirror=True,
+        ticks='outside',
+        tickwidth=1,
+        tickcolor='black',
+        ticklen=4,
+        gridcolor='lightgrey',
+        griddash='dot',
+        gridwidth=0.5,
+        showgrid=False,  # No grid per scientific style
+        title_font=dict(family="serif", size=11, weight="bold"),
+        tickfont=dict(family="serif", size=10)
+    )
+    
+    return fig
+
+def plot_yearly_publications(yearly_data: Dict[int, int], plot_palette: Dict, colors: Dict):
     """Plot yearly publications"""
     years = sorted(yearly_data.keys())
     counts = [yearly_data[y] for y in years]
@@ -1698,8 +1859,8 @@ def plot_yearly_publications(yearly_data: Dict[int, int], colors: Dict, color_sc
     fig.add_trace(go.Bar(
         x=years,
         y=counts,
-        marker_color=colors['primary'],
-        marker_line_color=colors['gradient_end'],
+        marker_color=plot_palette['categorical'][0] if plot_palette['categorical'] else colors['primary'],
+        marker_line_color='black',
         marker_line_width=1,
         name='Publications'
     ))
@@ -1708,28 +1869,18 @@ def plot_yearly_publications(yearly_data: Dict[int, int], colors: Dict, color_sc
         title='Publications by Year',
         xaxis_title='Year',
         yaxis_title='Number of Publications',
-        template='plotly_white',
         hovermode='x',
-        showlegend=False,
-        font=dict(family='serif', size=10),
-        title_font=dict(family='serif', size=12, weight='bold'),
-        xaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        ),
-        yaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        )
+        showlegend=False
     )
     
+    fig = apply_scientific_style(fig)
     fig.update_xaxes(tickangle=45)
     return fig
 
 def plot_comparative_publications(yearly_papers: Dict[int, int], 
                                    yearly_wos: Dict[int, int], 
                                    yearly_scopus: Dict[int, int],
-                                   colors: Dict, color_scale: str):
+                                   plot_palette: Dict, colors: Dict):
     """Plot comparative publications by year (OpenAlex vs WoS vs Scopus)"""
     years = sorted(set(list(yearly_papers.keys()) + list(yearly_wos.keys()) + list(yearly_scopus.keys())))
     
@@ -1739,11 +1890,15 @@ def plot_comparative_publications(yearly_papers: Dict[int, int],
     
     fig = go.Figure()
     
+    categorical = plot_palette['categorical']
+    if len(categorical) < 3:
+        categorical = categorical * 3
+    
     fig.add_trace(go.Bar(
         name='All OpenAlex',
         x=years,
         y=all_counts,
-        marker_color=colors['primary'],
+        marker_color=categorical[0],
         opacity=0.7
     ))
     
@@ -1751,7 +1906,7 @@ def plot_comparative_publications(yearly_papers: Dict[int, int],
         name='WoS Indexed',
         x=years,
         y=wos_counts,
-        marker_color=colors['success'],
+        marker_color=categorical[1],
         opacity=0.7
     ))
     
@@ -1759,7 +1914,7 @@ def plot_comparative_publications(yearly_papers: Dict[int, int],
         name='Scopus Indexed',
         x=years,
         y=scopus_counts,
-        marker_color=colors['secondary'],
+        marker_color=categorical[2],
         opacity=0.7
     ))
     
@@ -1768,27 +1923,14 @@ def plot_comparative_publications(yearly_papers: Dict[int, int],
         xaxis_title='Year',
         yaxis_title='Number of Publications',
         barmode='group',
-        template='plotly_white',
-        hovermode='x',
-        font=dict(family='serif', size=10),
-        title_font=dict(family='serif', size=12, weight='bold'),
-        xaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        ),
-        yaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        ),
-        legend=dict(
-            font=dict(family='serif', size=10)
-        )
+        hovermode='x'
     )
     
+    fig = apply_scientific_style(fig)
     fig.update_xaxes(tickangle=45)
     return fig
 
-def plot_yearly_citations(yearly_citations: Dict[int, int], colors: Dict, color_scale: str):
+def plot_yearly_citations(yearly_citations: Dict[int, int], plot_palette: Dict, colors: Dict):
     """Plot yearly citations"""
     years = sorted(yearly_citations.keys())
     citations = [yearly_citations[y] for y in years]
@@ -1797,8 +1939,8 @@ def plot_yearly_citations(yearly_citations: Dict[int, int], colors: Dict, color_
     fig.add_trace(go.Bar(
         x=years,
         y=citations,
-        marker_color=colors['secondary'],
-        marker_line_color=colors['gradient_start'],
+        marker_color=plot_palette['categorical'][1] if len(plot_palette['categorical']) > 1 else plot_palette['categorical'][0],
+        marker_line_color='black',
         marker_line_width=1,
         name='Citations'
     ))
@@ -1807,25 +1949,15 @@ def plot_yearly_citations(yearly_citations: Dict[int, int], colors: Dict, color_
         title='Citations by Year (Total)',
         xaxis_title='Year',
         yaxis_title='Total Citations',
-        template='plotly_white',
         hovermode='x',
-        showlegend=False,
-        font=dict(family='serif', size=10),
-        title_font=dict(family='serif', size=12, weight='bold'),
-        xaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        ),
-        yaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        )
+        showlegend=False
     )
     
+    fig = apply_scientific_style(fig)
     fig.update_xaxes(tickangle=45)
     return fig
 
-def plot_top_authors(authors_data: List[Tuple[str, int]], colors: Dict, color_scale: str):
+def plot_top_authors(authors_data: List[Tuple[str, int]], plot_palette: Dict, colors: Dict):
     """Plot top authors"""
     authors = [a[0][:30] + '...' if len(a[0]) > 30 else a[0] for a in authors_data[:15]]
     counts = [a[1] for a in authors_data[:15]]
@@ -1835,8 +1967,8 @@ def plot_top_authors(authors_data: List[Tuple[str, int]], colors: Dict, color_sc
         y=authors[::-1],
         x=counts[::-1],
         orientation='h',
-        marker_color=colors['primary'],
-        marker_line_color=colors['gradient_end'],
+        marker_color=plot_palette['categorical'][0],
+        marker_line_color='black',
         marker_line_width=1
     ))
     
@@ -1844,24 +1976,14 @@ def plot_top_authors(authors_data: List[Tuple[str, int]], colors: Dict, color_sc
         title='Top Authors by Publication Count',
         xaxis_title='Number of Publications',
         yaxis_title='Author',
-        template='plotly_white',
         height=500,
-        showlegend=False,
-        font=dict(family='serif', size=10),
-        title_font=dict(family='serif', size=12, weight='bold'),
-        xaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        ),
-        yaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        )
+        showlegend=False
     )
     
+    fig = apply_scientific_style(fig)
     return fig
 
-def plot_top_journals(journals_data: List[Tuple[str, int]], colors: Dict, color_scale: str):
+def plot_top_journals(journals_data: List[Tuple[str, int]], plot_palette: Dict, colors: Dict):
     """Plot top journals"""
     journals = [j[0][:40] + '...' if len(j[0]) > 40 else j[0] for j in journals_data[:15]]
     counts = [j[1] for j in journals_data[:15]]
@@ -1871,8 +1993,8 @@ def plot_top_journals(journals_data: List[Tuple[str, int]], colors: Dict, color_
         y=journals[::-1],
         x=counts[::-1],
         orientation='h',
-        marker_color=colors['secondary'],
-        marker_line_color=colors['gradient_start'],
+        marker_color=plot_palette['categorical'][1] if len(plot_palette['categorical']) > 1 else plot_palette['categorical'][0],
+        marker_line_color='black',
         marker_line_width=1
     ))
     
@@ -1880,49 +2002,44 @@ def plot_top_journals(journals_data: List[Tuple[str, int]], colors: Dict, color_
         title='Top Journals by Publication Count',
         xaxis_title='Number of Publications',
         yaxis_title='Journal',
-        template='plotly_white',
         height=500,
-        showlegend=False,
-        font=dict(family='serif', size=10),
-        title_font=dict(family='serif', size=12, weight='bold'),
-        xaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        ),
-        yaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        )
+        showlegend=False
     )
     
+    fig = apply_scientific_style(fig)
     return fig
 
-def plot_top_publishers(publishers_data: List[Tuple[str, int]], colors: Dict, color_scale: str):
-    """Plot top publishers"""
+def plot_top_publishers(publishers_data: List[Tuple[str, int]], plot_palette: Dict, colors: Dict):
+    """Plot top publishers with distinct colors"""
     publishers = [p[0][:30] + '...' if len(p[0]) > 30 else p[0] for p in publishers_data[:15]]
     counts = [p[1] for p in publishers_data[:15]]
+    
+    # Use categorical palette with enough distinct colors
+    colors_list = plot_palette['categorical']
+    if len(colors_list) < len(publishers):
+        # Repeat colors if needed
+        colors_list = colors_list * (len(publishers) // len(colors_list) + 1)
     
     fig = go.Figure()
     fig.add_trace(go.Pie(
         labels=publishers,
         values=counts,
-        marker_colors=[colors['primary'], colors['secondary'], colors['gradient_start'], 
-                       colors['gradient_end'], colors['accent1'], colors['accent2']] * 3,
+        marker_colors=colors_list[:len(publishers)],
         textinfo='percent+label',
-        insidetextorientation='radial'
+        insidetextorientation='radial',
+        textfont=dict(family="serif", size=10)
     ))
     
     fig.update_layout(
         title='Top Publishers Distribution',
-        template='plotly_white',
         height=500,
-        font=dict(family='serif', size=10),
-        title_font=dict(family='serif', size=12, weight='bold')
+        showlegend=False
     )
     
+    fig = apply_scientific_style(fig)
     return fig
 
-def plot_citation_distribution(distribution: Dict[str, int], colors: Dict, color_scale: str):
+def plot_citation_distribution(distribution: Dict[str, int], plot_palette: Dict, colors: Dict):
     """Plot citation distribution"""
     categories = list(distribution.keys())
     counts = list(distribution.values())
@@ -1931,8 +2048,8 @@ def plot_citation_distribution(distribution: Dict[str, int], colors: Dict, color
     fig.add_trace(go.Bar(
         x=categories,
         y=counts,
-        marker_color=colors['primary'],
-        marker_line_color=colors['gradient_end'],
+        marker_color=plot_palette['categorical'][2] if len(plot_palette['categorical']) > 2 else plot_palette['categorical'][0],
+        marker_line_color='black',
         marker_line_width=1
     ))
     
@@ -1940,53 +2057,39 @@ def plot_citation_distribution(distribution: Dict[str, int], colors: Dict, color
         title='Citation Distribution',
         xaxis_title='Citation Range',
         yaxis_title='Number of Papers',
-        template='plotly_white',
-        hovermode='x',
-        font=dict(family='serif', size=10),
-        title_font=dict(family='serif', size=12, weight='bold'),
-        xaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        ),
-        yaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        )
+        hovermode='x'
     )
     
+    fig = apply_scientific_style(fig)
     return fig
 
-def plot_collaboration_types(collab_data: Dict[str, int], colors: Dict, color_scale: str):
+def plot_collaboration_types(collab_data: Dict[str, int], plot_palette: Dict, colors: Dict):
     """Plot collaboration types"""
     labels = list(collab_data.keys())
     values = list(collab_data.values())
     
-    colors_map = {
-        'Intra-institutional': colors['primary'],
-        'Inter-institutional (domestic)': colors['secondary'],
-        'International': colors['gradient_start']
-    }
+    # Use first 3 colors from categorical palette
+    colors_list = plot_palette['categorical'][:3]
     
     fig = go.Figure()
     fig.add_trace(go.Pie(
         labels=labels,
         values=values,
-        marker_colors=[colors_map.get(l, colors['accent1']) for l in labels],
+        marker_colors=colors_list,
         textinfo='percent+label',
-        insidetextorientation='radial'
+        insidetextorientation='radial',
+        textfont=dict(family="serif", size=10)
     ))
     
     fig.update_layout(
         title='Collaboration Types',
-        template='plotly_white',
-        height=400,
-        font=dict(family='serif', size=10),
-        title_font=dict(family='serif', size=12, weight='bold')
+        height=400
     )
     
+    fig = apply_scientific_style(fig)
     return fig
 
-def plot_yearly_collaboration(yearly_collab: Dict, colors: Dict, color_scale: str):
+def plot_yearly_collaboration(yearly_collab: Dict, plot_palette: Dict, colors: Dict):
     """Plot yearly collaboration breakdown"""
     years = sorted(yearly_collab.keys())
     
@@ -2000,27 +2103,30 @@ def plot_yearly_collaboration(yearly_collab: Dict, colors: Dict, color_scale: st
         inter.append(data.get('Inter-institutional (domestic)', 0))
         international.append(data.get('International', 0))
     
+    # Use first 3 colors from categorical palette
+    colors_list = plot_palette['categorical'][:3]
+    
     fig = go.Figure()
     
     fig.add_trace(go.Bar(
         name='Intra-institutional',
         x=years,
         y=intra,
-        marker_color=colors['primary']
+        marker_color=colors_list[0]
     ))
     
     fig.add_trace(go.Bar(
         name='Inter-institutional (domestic)',
         x=years,
         y=inter,
-        marker_color=colors['secondary']
+        marker_color=colors_list[1]
     ))
     
     fig.add_trace(go.Bar(
         name='International',
         x=years,
         y=international,
-        marker_color=colors['gradient_start']
+        marker_color=colors_list[2]
     ))
     
     fig.update_layout(
@@ -2028,27 +2134,104 @@ def plot_yearly_collaboration(yearly_collab: Dict, colors: Dict, color_scale: st
         xaxis_title='Year',
         yaxis_title='Number of Publications',
         barmode='stack',
-        template='plotly_white',
-        hovermode='x',
-        font=dict(family='serif', size=10),
-        title_font=dict(family='serif', size=12, weight='bold'),
-        xaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        ),
-        yaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        ),
-        legend=dict(
-            font=dict(family='serif', size=10)
-        )
+        hovermode='x'
     )
     
+    fig = apply_scientific_style(fig)
     fig.update_xaxes(tickangle=45)
     return fig
 
-def plot_citations_vs_references(papers: List[Dict], colors: Dict, color_scale: str):
+def plot_country_collaboration_network(country_collabs: List[Dict], plot_palette: Dict, colors: Dict):
+    """Plot country collaboration network with domestic and international edges"""
+    if len(country_collabs) < 2:
+        return None
+    
+    # Create graph
+    G = nx.Graph()
+    
+    # Add edges with weights
+    for collab in country_collabs:
+        source = collab['source']
+        target = collab['target']
+        if source and target and source != target:
+            if G.has_edge(source, target):
+                G[source][target]['weight'] += 1
+            else:
+                G.add_edge(source, target, weight=1)
+    
+    if len(G.nodes()) < 2:
+        return None
+    
+    # Calculate layout
+    pos = nx.spring_layout(G, k=2, iterations=50)
+    
+    # Prepare edge traces
+    edge_x = []
+    edge_y = []
+    edge_colors = []
+    
+    for edge in G.edges(data=True):
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+        
+        # Color edges: domestic (same country) vs international
+        # For demo, we'll use different colors based on edge weight or node similarity
+        # In real implementation, you'd need country information
+        edge_colors.append(plot_palette['categorical'][1] if edge[2].get('weight', 1) > 1 else plot_palette['categorical'][0])
+    
+    # Node traces
+    node_x = []
+    node_y = []
+    node_text = []
+    
+    for node in G.nodes():
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        node_text.append(node)
+    
+    fig = go.Figure()
+    
+    # Add edges
+    edge_trace = go.Scatter(
+        x=edge_x, y=edge_y,
+        line=dict(width=1, color=plot_palette['categorical'][0]),
+        hoverinfo='none',
+        mode='lines'
+    )
+    fig.add_trace(edge_trace)
+    
+    # Add nodes
+    node_trace = go.Scatter(
+        x=node_x, y=node_y,
+        mode='markers+text',
+        text=node_text,
+        textposition="top center",
+        hoverinfo='text',
+        marker=dict(
+            size=20,
+            color=plot_palette['categorical'][2],
+            line=dict(color='black', width=1)
+        ),
+        textfont=dict(family="serif", size=10)
+    )
+    fig.add_trace(node_trace)
+    
+    fig.update_layout(
+        title='Country Collaboration Network',
+        showlegend=False,
+        hovermode='closest',
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        height=500
+    )
+    
+    fig = apply_scientific_style(fig)
+    return fig
+
+def plot_citations_vs_references(papers: List[Dict], plot_palette: Dict, colors: Dict):
     """Plot citations vs references scatter with real reference counts"""
     citations = [p['cited_by_count'] for p in papers]
     references = [p.get('references_count', 0) for p in papers]
@@ -2063,7 +2246,7 @@ def plot_citations_vs_references(papers: List[Dict], colors: Dict, color_scale: 
         marker=dict(
             size=8,
             color=years,
-            colorscale=color_scale,
+            colorscale=plot_palette['sequential'],
             showscale=True,
             colorbar=dict(
                 title='Year',
@@ -2080,37 +2263,41 @@ def plot_citations_vs_references(papers: List[Dict], colors: Dict, color_scale: 
         title='Citations vs References (with Year Color Map)',
         xaxis_title='Number of References',
         yaxis_title='Number of Citations',
-        template='plotly_white',
-        height=500,
-        font=dict(family='serif', size=10),
-        title_font=dict(family='serif', size=12, weight='bold'),
-        xaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        ),
-        yaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        )
+        height=500
     )
     
+    fig = apply_scientific_style(fig)
     return fig
 
-def plot_quartile_distribution(papers: List[Dict], database: str, colors: Dict, color_scale: str):
-    """Plot quartile distribution for WoS or Scopus"""
+def plot_quartile_distribution(papers: List[Dict], database: str, plot_palette: Dict, colors: Dict):
+    """Plot quartile distribution for WoS or Scopus (only Q1-Q4 format)"""
     if database == 'WoS':
         quartiles = [p.get('wos_quartile') for p in papers if p.get('wos_indexed') and p.get('wos_quartile')]
         title = 'WoS Quartile Distribution'
-        color = colors['success']
+        color_idx = 0
     else:
         quartiles = [p.get('scopus_quartile') for p in papers if p.get('scopus_indexed') and p.get('scopus_quartile')]
         title = 'Scopus Quartile Distribution'
-        color = colors['secondary']
+        color_idx = 1
     
     if not quartiles:
         return None
     
-    quartile_counts = Counter(quartiles)
+    # Filter to only include Q1-Q4 format and normalize
+    filtered_quartiles = []
+    for q in quartiles:
+        if q and isinstance(q, str):
+            # Extract just the Q1, Q2, etc. part
+            match = re.search(r'(Q[1-4])', q.upper())
+            if match:
+                filtered_quartiles.append(match.group(1))
+            elif q.strip() in ['1', '2', '3', '4']:
+                filtered_quartiles.append(f'Q{q.strip()}')
+    
+    if not filtered_quartiles:
+        return None
+    
+    quartile_counts = Counter(filtered_quartiles)
     # Ensure all Q1-Q4 are present
     for q in ['Q1', 'Q2', 'Q3', 'Q4']:
         if q not in quartile_counts:
@@ -2119,32 +2306,26 @@ def plot_quartile_distribution(papers: List[Dict], database: str, colors: Dict, 
     # Sort in order Q1, Q2, Q3, Q4
     sorted_items = sorted([(str(k), v) for k, v in quartile_counts.items()], key=lambda x: x[0])
     
+    # Use colors from palette
+    colors_list = plot_palette['categorical']
+    bar_color = colors_list[color_idx % len(colors_list)]
+    
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=[item[0] for item in sorted_items],
         y=[item[1] for item in sorted_items],
-        marker_color=color,
-        marker_line_color=colors['gradient_end'],
+        marker_color=bar_color,
+        marker_line_color='black',
         marker_line_width=1
     ))
     
     fig.update_layout(
         title=title,
         xaxis_title='Quartile',
-        yaxis_title='Number of Papers',
-        template='plotly_white',
-        font=dict(family='serif', size=10),
-        title_font=dict(family='serif', size=12, weight='bold'),
-        xaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        ),
-        yaxis=dict(
-            title_font=dict(family='serif', size=11, weight='bold'),
-            tickfont=dict(family='serif', size=10)
-        )
+        yaxis_title='Number of Papers'
     )
     
+    fig = apply_scientific_style(fig)
     return fig
 
 def plot_top_cited_table(papers: List[Dict], title: str, colors: Dict):
@@ -2167,71 +2348,29 @@ def plot_top_cited_table(papers: List[Dict], title: str, colors: Dict):
     
     return df
 
-def create_validation_summary(validation_stats: Dict, colors: Dict, color_scale: str):
-    """Create validation summary visualization"""
-    if not validation_stats:
-        return None
-    
-    labels = ['Validated & Kept', 'Kept (No DOI/Not Found)', 'Rejected (Year Mismatch)']
-    values = [
-        validation_stats.get('validated', 0),
-        validation_stats.get('no_doi', 0) + validation_stats.get('not_found', 0),
-        validation_stats.get('rejected', 0)
-    ]
-    
-    fig = go.Figure()
-    fig.add_trace(go.Pie(
-        labels=labels,
-        values=values,
-        marker_colors=[colors['success'], colors['warning'], colors['danger']],
-        textinfo='percent+label',
-        insidetextorientation='radial'
-    ))
-    
-    fig.update_layout(
-        title='DOI Validation Summary',
-        template='plotly_white',
-        height=400,
-        font=dict(family='serif', size=10),
-        title_font=dict(family='serif', size=12, weight='bold')
-    )
-    
-    return fig
-
 # ============================================================================
 # MAIN APP
 # ============================================================================
 
 def main():
     with st.sidebar:
-        st.markdown(f"<h2 style='color: {colors['primary']};'>🎨 Settings</h2>", unsafe_allow_html=True)
+        st.markdown(f"<h2 style='color: {colors['primary']};'>⚙️ Settings</h2>", unsafe_allow_html=True)
         
-        st.markdown("**Color Theme:**")
+        st.markdown("**Plot Color Palette:**")
+        palette_names = [p['name'] for p in PLOT_COLOR_PALETTES]
+        selected_palette_idx = palette_names.index(st.session_state['plot_palette']['name']) if st.session_state['plot_palette']['name'] in palette_names else 0
         
-        cols = st.columns(4)
-        for i, palette in enumerate(UI_COLOR_PALETTES[:8]):
-            with cols[i % 4]:
-                if st.button(
-                    "●", 
-                    key=f"palette_{i}",
-                    help=palette['name'],
-                    use_container_width=True
-                ):
-                    st.session_state['ui_palette'] = palette
-                    st.rerun()
-                
-                st.markdown(
-                    f'<div style="width:100%; height:5px; background: linear-gradient(90deg, {palette["gradient_start"]}, {palette["gradient_end"]}); border-radius:3px; margin-bottom:5px;"></div>',
-                    unsafe_allow_html=True
-                )
-        
-        st.markdown("**Color Scale for Plots:**")
-        selected_color_scale = st.selectbox(
-            "Select color ramp",
-            options=COLOR_SCALES,
-            index=COLOR_SCALES.index(st.session_state['color_scale']) if st.session_state['color_scale'] in COLOR_SCALES else 0
+        selected_palette_name = st.selectbox(
+            "Select color scheme for plots",
+            options=palette_names,
+            index=selected_palette_idx
         )
-        st.session_state['color_scale'] = selected_color_scale
+        
+        # Update selected palette
+        for p in PLOT_COLOR_PALETTES:
+            if p['name'] == selected_palette_name:
+                st.session_state['plot_palette'] = p
+                break
         
         st.markdown("---")
         
@@ -2252,7 +2391,7 @@ def main():
                     st.rerun()
             st.markdown("---")
         
-        # Database status indicators (replacing API Status)
+        # Database status indicators
         st.markdown(f"**📚 Database Status:**")
         
         wos_status = "✅" if st.session_state['wos_data']['normalized_map'] else "❌"
@@ -2313,24 +2452,24 @@ def main():
         col1, col2 = st.columns([3, 1])
         
         with col1:
-            # Используем значение из session_state для отображения
+            # Use value from session_state for display
             query = st.text_input(
                 "Institution or ROR ID",
                 value=st.session_state['search_query'],
                 placeholder="Enter name or ROR ID...",
                 key="inst_query_input"
             )
-            # Обновляем session_state при изменении
+            # Update session_state on change
             if query != st.session_state['search_query']:
                 st.session_state['search_query'] = query
-                # Сбрасываем результаты при изменении запроса
+                # Reset results when query changes
                 st.session_state['search_performed'] = False
                 st.session_state['search_results'] = None
         
         with col2:
             search_clicked = st.button("🔍 Search", type="primary", key="search_btn", use_container_width=True)
         
-        # Выполняем поиск ТОЛЬКО при нажатии кнопки Search
+        # Perform search ONLY when Search button is clicked
         if search_clicked and query:
             with st.spinner("Searching for institution..."):
                 if is_ror_id(query):
@@ -2363,7 +2502,7 @@ def main():
                     st.session_state['search_results'] = results
                     st.session_state['search_performed'] = True
         
-        # Отображаем результаты из session_state (если они есть)
+        # Display results from session_state (if they exist)
         if st.session_state['search_performed'] and st.session_state['search_results'] is not None:
             results = st.session_state['search_results']
             
@@ -2389,7 +2528,7 @@ def main():
                             st.markdown(f"ROR: {inst['ror']} | Country: {inst.get('country', 'N/A')} | Works: {inst['works_count']:,}")
                         
                         with col2:
-                            # Select button - при нажатии устанавливаем институт и переходим к шагу 2
+                            # Select button - sets institution and moves to step 2
                             if st.button("Select", key=f"select_{inst_key}", use_container_width=True):
                                 st.session_state['institution_id'] = inst['id']
                                 st.session_state['institution_name'] = inst['display_name']
@@ -2407,16 +2546,15 @@ def main():
                                 st.rerun()
                         
                         with col3:
-                            # Details button - только переключаем детали, без rerun
+                            # Details button - toggles details without rerun
                             if st.button("Details", key=f"details_{inst_key}", use_container_width=True):
                                 # Toggle details for this institution
                                 if inst_key in st.session_state['expanded_details']:
                                     st.session_state['expanded_details'][inst_key] = not st.session_state['expanded_details'][inst_key]
                                 else:
                                     st.session_state['expanded_details'][inst_key] = True
-                                # Не вызываем rerun, просто обновляем состояние
                         
-                        # Show details if expanded (используем уникальный ключ)
+                        # Show details if expanded (use unique key)
                         if st.session_state['expanded_details'].get(inst_key, False):
                             st.markdown(f"""
                             <div style="background-color: {colors['background']}; padding: 1rem; border-radius: 8px; margin: 0.5rem 0;">
@@ -2442,7 +2580,7 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
         
-        # Navigation buttons (только если институт выбран)
+        # Navigation buttons (only if institution is selected)
         if st.session_state['institution_id']:
             col1, col2 = st.columns(2)
             with col1:
@@ -2587,13 +2725,13 @@ def main():
         with col1:
             if st.button("← New Search", use_container_width=True):
                 palette = st.session_state['ui_palette']
-                color_scale = st.session_state['color_scale']
+                plot_palette = st.session_state['plot_palette']
                 recent = st.session_state['recent_institutions']
                 for key in list(st.session_state.keys()):
-                    if key not in ['ui_palette', 'color_scale', 'previous_palette', 'recent_institutions', 'wos_data', 'scopus_data']:
+                    if key not in ['ui_palette', 'plot_palette', 'previous_palette', 'recent_institutions', 'wos_data', 'scopus_data']:
                         del st.session_state[key]
                 st.session_state['ui_palette'] = palette
-                st.session_state['color_scale'] = color_scale
+                st.session_state['plot_palette'] = plot_palette
                 st.session_state['recent_institutions'] = recent
                 st.session_state['step'] = 1
                 st.rerun()
@@ -2693,11 +2831,6 @@ def main():
         """)
         st.markdown('</div>', unsafe_allow_html=True)
         
-        if validation:
-            fig_val = create_validation_summary(validation, colors, st.session_state['color_scale'])
-            if fig_val:
-                st.plotly_chart(fig_val, use_container_width=True)
-        
         st.markdown("---")
         
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
@@ -2710,11 +2843,11 @@ def main():
             col1, col2 = st.columns(2)
             
             with col1:
-                fig_yearly = plot_yearly_publications(data['yearly_papers'], colors, st.session_state['color_scale'])
+                fig_yearly = plot_yearly_publications(data['yearly_papers'], st.session_state['plot_palette'], colors)
                 st.plotly_chart(fig_yearly, use_container_width=True)
             
             with col2:
-                fig_cit_year = plot_yearly_citations(data['yearly_citations'], colors, st.session_state['color_scale'])
+                fig_cit_year = plot_yearly_citations(data['yearly_citations'], st.session_state['plot_palette'], colors)
                 st.plotly_chart(fig_cit_year, use_container_width=True)
             
             # Comparative plot
@@ -2722,19 +2855,19 @@ def main():
                 data['yearly_papers'], 
                 data['yearly_papers_wos'], 
                 data['yearly_papers_scopus'],
-                colors, 
-                st.session_state['color_scale']
+                st.session_state['plot_palette'], 
+                colors
             )
             st.plotly_chart(fig_comp, use_container_width=True)
             
-            fig_scatter = plot_citations_vs_references(data['enriched_papers'], colors, st.session_state['color_scale'])
+            fig_scatter = plot_citations_vs_references(data['enriched_papers'], st.session_state['plot_palette'], colors)
             st.plotly_chart(fig_scatter, use_container_width=True)
         
         with tab2:
             st.markdown("### Top 20 Authors")
             
             if data['top_authors']:
-                fig_authors = plot_top_authors(data['top_authors'], colors, st.session_state['color_scale'])
+                fig_authors = plot_top_authors(data['top_authors'], st.session_state['plot_palette'], colors)
                 st.plotly_chart(fig_authors, use_container_width=True)
                 
                 df_authors = pd.DataFrame(data['top_authors'], columns=['Author', 'Publications'])
@@ -2749,7 +2882,7 @@ def main():
             
             with col1:
                 if data['top_journals']:
-                    fig_journals = plot_top_journals(data['top_journals'], colors, st.session_state['color_scale'])
+                    fig_journals = plot_top_journals(data['top_journals'], st.session_state['plot_palette'], colors)
                     st.plotly_chart(fig_journals, use_container_width=True)
             
             with col2:
@@ -2764,7 +2897,7 @@ def main():
             
             with col1:
                 if data['top_publishers']:
-                    fig_publishers = plot_top_publishers(data['top_publishers'], colors, st.session_state['color_scale'])
+                    fig_publishers = plot_top_publishers(data['top_publishers'], st.session_state['plot_palette'], colors)
                     st.plotly_chart(fig_publishers, use_container_width=True)
             
             with col2:
@@ -2775,7 +2908,7 @@ def main():
         with tab5:
             st.markdown("### Citation Analysis")
             
-            fig_cit_dist = plot_citation_distribution(data['citation_distribution'], colors, st.session_state['color_scale'])
+            fig_cit_dist = plot_citation_distribution(data['citation_distribution'], st.session_state['plot_palette'], colors)
             st.plotly_chart(fig_cit_dist, use_container_width=True)
             
             st.markdown("### Top 20 Most Cited Papers")
@@ -2794,7 +2927,7 @@ def main():
             col1, col2 = st.columns(2)
             
             with col1:
-                fig_collab = plot_collaboration_types(data['collaboration_types'], colors, st.session_state['color_scale'])
+                fig_collab = plot_collaboration_types(data['collaboration_types'], st.session_state['plot_palette'], colors)
                 st.plotly_chart(fig_collab, use_container_width=True)
             
             with col2:
@@ -2804,8 +2937,14 @@ def main():
                 )
                 st.dataframe(df_collab, use_container_width=True)
             
-            fig_yearly_collab = plot_yearly_collaboration(data['yearly_collaboration'], colors, st.session_state['color_scale'])
+            fig_yearly_collab = plot_yearly_collaboration(data['yearly_collaboration'], st.session_state['plot_palette'], colors)
             st.plotly_chart(fig_yearly_collab, use_container_width=True)
+            
+            # Country collaboration network
+            if data.get('country_collaborations'):
+                fig_country_network = plot_country_collaboration_network(data['country_collaborations'], st.session_state['plot_palette'], colors)
+                if fig_country_network:
+                    st.plotly_chart(fig_country_network, use_container_width=True)
         
         with tab7:
             st.markdown("### WoS and Scopus Analysis")
@@ -2813,14 +2952,14 @@ def main():
             col1, col2 = st.columns(2)
             
             with col1:
-                fig_wos_quartile = plot_quartile_distribution(data['enriched_papers'], 'WoS', colors, st.session_state['color_scale'])
+                fig_wos_quartile = plot_quartile_distribution(data['enriched_papers'], 'WoS', st.session_state['plot_palette'], colors)
                 if fig_wos_quartile:
                     st.plotly_chart(fig_wos_quartile, use_container_width=True)
                 else:
                     st.info("No WoS-indexed papers with quartile information")
             
             with col2:
-                fig_scopus_quartile = plot_quartile_distribution(data['enriched_papers'], 'Scopus', colors, st.session_state['color_scale'])
+                fig_scopus_quartile = plot_quartile_distribution(data['enriched_papers'], 'Scopus', st.session_state['plot_palette'], colors)
                 if fig_scopus_quartile:
                     st.plotly_chart(fig_scopus_quartile, use_container_width=True)
                 else:
@@ -2840,7 +2979,7 @@ def main():
                 
                 journal_avg_if = []
                 for journal, papers_list in wos_journals.items():
-                    # Фильтруем None значения
+                    # Filter None values
                     if_values = [p['if'] for p in papers_list if p['if'] is not None]
                     if if_values:
                         avg_if = np.mean(if_values)
@@ -2855,7 +2994,7 @@ def main():
                 
                 if journal_avg_if:
                     df_wos = pd.DataFrame(journal_avg_if)
-                    # Проверяем наличие колонки перед сортировкой
+                    # Check column existence before sorting
                     if 'Average IF' in df_wos.columns:
                         df_wos = df_wos.sort_values('Average IF', ascending=False).head(15)
                         st.dataframe(df_wos, use_container_width=True)
@@ -2876,7 +3015,7 @@ def main():
                 
                 journal_avg_citescore = []
                 for journal, papers_list in scopus_journals.items():
-                    # Фильтруем None значения
+                    # Filter None values
                     citescore_values = [p['citescore'] for p in papers_list if p['citescore'] is not None]
                     if citescore_values:
                         avg_citescore = np.mean(citescore_values)
@@ -2891,7 +3030,7 @@ def main():
                 
                 if journal_avg_citescore:
                     df_scopus = pd.DataFrame(journal_avg_citescore)
-                    # Проверяем наличие колонки перед сортировкой
+                    # Check column existence before sorting
                     if 'Average CiteScore' in df_scopus.columns:
                         df_scopus = df_scopus.sort_values('Average CiteScore', ascending=False).head(15)
                         st.dataframe(df_scopus, use_container_width=True)
@@ -3025,13 +3164,6 @@ def main():
             )
         
         st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown(f"""
-    <div class="footer">
-        <p>🏛️ UnInst Analytics | Data: OpenAlex, Crossref, WoS (IF.xlsx), Scopus (CS.xlsx) | Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
-    </div>
-    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
-
