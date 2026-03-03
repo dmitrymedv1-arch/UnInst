@@ -710,6 +710,7 @@ def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
         
         issn_to_data = {}
         formatted_to_data = {}  # Store formatted ISSNs (with hyphen)
+        normalized_to_data = {}  # Store normalized ISSNs (without hyphen)
         
         for _, row in df.iterrows():
             issn = str(row.get('ISSN', '')).strip()
@@ -718,25 +719,30 @@ def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
                 quartile = row.get('Quartile', '')
                 journal_title = row.get('Journal title', row.get('Title', ''))  # Try different column names
                 
-                # Store original ISSN (with hyphen)
-                issn_to_data[issn] = {
+                data = {
                     'if': if_value,
                     'quartile': quartile,
                     'database': 'WoS',
                     'title': journal_title
                 }
                 
-                # Format ISSN (in case file has no hyphen)
+                # Store original ISSN (as in file)
+                issn_to_data[issn] = data
+                
+                # Format ISSN with hyphen
                 formatted_issn = format_issn_with_hyphen(issn)
                 if formatted_issn and formatted_issn != issn:
-                    formatted_to_data[formatted_issn] = {
-                        'if': if_value,
-                        'quartile': quartile,
-                        'database': 'WoS',
-                        'title': journal_title
-                    }
+                    formatted_to_data[formatted_issn] = data
+                
+                # Normalize ISSN (remove hyphen)
+                normalized_issn = normalize_issn(issn)
+                if normalized_issn and normalized_issn != issn and normalized_issn != formatted_issn:
+                    normalized_to_data[normalized_issn] = data
         
-        return issn_to_data, formatted_to_data
+        # Merge all maps
+        all_maps = {**issn_to_data, **formatted_to_data, **normalized_to_data}
+        
+        return issn_to_data, all_maps
         
     except Exception as e:
         print(f"Error loading WoS database: {e}")
@@ -747,8 +753,8 @@ def load_scopus_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
     """
     Load Scopus database from CS.xlsx and normalize quartile values to Q1-Q4 format
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    scopus_file_path = os.path.join(script_dir, 'CS.xlsx')
+    # Look for file in current directory
+    scopus_file_path = 'CS.xlsx'
     
     if not os.path.exists(scopus_file_path):
         return {}, {}
@@ -763,6 +769,7 @@ def load_scopus_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
         
         issn_to_data = {}
         formatted_to_data = {}  # Store formatted ISSNs (with hyphen)
+        normalized_to_data = {}  # Store normalized ISSNs (without hyphen)
         
         for _, row in df.iterrows():
             issn = str(row.get('Print ISSN', '')).strip()
@@ -799,25 +806,30 @@ def load_scopus_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
                 
                 source_title = row.get('Source title', row.get('Title', ''))  # Try different column names
                 
-                # Store original ISSN (as is from file)
-                issn_to_data[issn] = {
+                data = {
                     'citescore': citescore,
                     'quartile': quartile,
                     'database': 'Scopus',
                     'title': source_title
                 }
                 
-                # Format ISSN to standard with hyphen
+                # Store original ISSN (as in file)
+                issn_to_data[issn] = data
+                
+                # Format ISSN with hyphen
                 formatted_issn = format_issn_with_hyphen(issn)
-                if formatted_issn:
-                    formatted_to_data[formatted_issn] = {
-                        'citescore': citescore,
-                        'quartile': quartile,
-                        'database': 'Scopus',
-                        'title': source_title
-                    }
+                if formatted_issn and formatted_issn != issn:
+                    formatted_to_data[formatted_issn] = data
+                
+                # Normalize ISSN (remove hyphen)
+                normalized_issn = normalize_issn(issn)
+                if normalized_issn and normalized_issn != issn and normalized_issn != formatted_issn:
+                    normalized_to_data[normalized_issn] = data
         
-        return issn_to_data, formatted_to_data
+        # Merge all maps
+        all_maps = {**issn_to_data, **formatted_to_data, **normalized_to_data}
+        
+        return issn_to_data, all_maps
         
     except Exception as e:
         print(f"Error loading Scopus database: {e}")
@@ -878,39 +890,57 @@ def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional
                              issn_list: List[str]) -> Tuple[Dict, Dict]:
     """
     Check if any ISSN matches WoS or Scopus databases.
-    Now prioritizes electronic ISSN if print is not available.
+    Now aggressively searches all possible ISSN formats.
     Returns: (wos_info, scopus_info)
     """
     wos_info = {'indexed': False, 'if': None, 'quartile': None, 'title': None}
     scopus_info = {'indexed': False, 'citescore': None, 'quartile': None, 'title': None}
     
-    # Collect all ISSNs to check (keep original format with hyphen)
+    # Collect all ISSNs in all possible formats
     all_issns = set()
+    all_variants = set()
     
-    # Add all possible ISSNs in original format (with hyphen)
-    if issn_print and issn_print.strip():
-        all_issns.add(issn_print.strip())
+    # Helper function to add all variants of an ISSN
+    def add_issn_variants(issn_val):
+        if not issn_val or not isinstance(issn_val, str):
+            return
+        issn_val = issn_val.strip()
+        if not issn_val:
+            return
+        
+        # Add original
+        all_issns.add(issn_val)
+        
+        # Add with hyphen (if not already)
+        if '-' not in issn_val:
+            formatted = format_issn_with_hyphen(issn_val)
+            if formatted:
+                all_variants.add(formatted)
+        else:
+            # Add without hyphen
+            normalized = normalize_issn(issn_val)
+            if normalized:
+                all_variants.add(normalized)
     
-    if issn_electronic and issn_electronic.strip():
-        all_issns.add(issn_electronic.strip())
+    # Add all possible ISSN sources
+    if issn_print:
+        add_issn_variants(issn_print)
+    
+    if issn_electronic:
+        add_issn_variants(issn_electronic)
     
     for issn in issn_list:
-        if issn and str(issn).strip():
-            all_issns.add(str(issn).strip())
+        if issn and isinstance(issn, str):
+            add_issn_variants(issn)
     
-    # Also add normalized versions for searching (in case file has no hyphen)
-    all_normalized = set()
-    for issn in all_issns:
-        normalized = normalize_issn(issn)
-        if normalized:
-            all_normalized.add(normalized)
+    # Combine all variants
+    all_to_check = all_issns.union(all_variants)
     
-    # Check WoS database - search by original ISSNs (with hyphen)
-    if st.session_state['wos_data']['issn_map'] or st.session_state['wos_data']['normalized_map']:
-        # First search by original ISSNs (with hyphen)
-        for issn in all_issns:
-            if issn in st.session_state['wos_data']['issn_map']:
-                data = st.session_state['wos_data']['issn_map'][issn]
+    # Check WoS database
+    if st.session_state['wos_data']['normalized_map']:
+        for issn in all_to_check:
+            if issn in st.session_state['wos_data']['normalized_map']:
+                data = st.session_state['wos_data']['normalized_map'][issn]
                 wos_info = {
                     'indexed': True,
                     'if': data.get('if'),
@@ -918,26 +948,12 @@ def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional
                     'title': data.get('title')
                 }
                 break
-        
-        # If not found, try normalized (in case file has no hyphen)
-        if not wos_info['indexed']:
-            for norm_issn in all_normalized:
-                if norm_issn in st.session_state['wos_data']['normalized_map']:
-                    data = st.session_state['wos_data']['normalized_map'][norm_issn]
-                    wos_info = {
-                        'indexed': True,
-                        'if': data.get('if'),
-                        'quartile': data.get('quartile'),
-                        'title': data.get('title')
-                    }
-                    break
     
-    # Check Scopus database - search by original ISSNs (with hyphen)
-    if st.session_state['scopus_data']['issn_map'] or st.session_state['scopus_data']['normalized_map']:
-        # First search by original ISSNs (as in CS.xlsx)
-        for issn in all_issns:
-            if issn in st.session_state['scopus_data']['issn_map']:
-                data = st.session_state['scopus_data']['issn_map'][issn]
+    # Check Scopus database
+    if st.session_state['scopus_data']['normalized_map']:
+        for issn in all_to_check:
+            if issn in st.session_state['scopus_data']['normalized_map']:
+                data = st.session_state['scopus_data']['normalized_map'][issn]
                 scopus_info = {
                     'indexed': True,
                     'citescore': data.get('citescore'),
@@ -945,19 +961,6 @@ def check_issn_in_databases(issn_print: Optional[str], issn_electronic: Optional
                     'title': data.get('title')
                 }
                 break
-        
-        # If not found, try formatted (with hyphen)
-        if not scopus_info['indexed']:
-            for issn in all_issns:
-                if issn in st.session_state['scopus_data']['normalized_map']:
-                    data = st.session_state['scopus_data']['normalized_map'][issn]
-                    scopus_info = {
-                        'indexed': True,
-                        'citescore': data.get('citescore'),
-                        'quartile': data.get('quartile'),
-                        'title': data.get('title')
-                    }
-                    break
     
     return wos_info, scopus_info
 
@@ -1399,6 +1402,12 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
                 oa_issn_list = source.get('issn', [])
                 if oa_issn_list and isinstance(oa_issn_list, list):
                     issn_list = oa_issn_list
+                    
+                    # Try to identify print/electronic from OpenAlex
+                    # OpenAlex sometimes has issn_l (linking ISSN) and other variants
+                    if 'issn_l' in source and source['issn_l']:
+                        if source['issn_l'] not in issn_list:
+                            issn_list.append(source['issn_l'])
     
     # Source 3: Check other possible places for ISSN in OpenAlex
     if not issn_list and not issn_print and not issn_electronic:
@@ -1426,13 +1435,8 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
     if issn_list:
         issn_list = [issn for issn in issn_list if issn and str(issn).strip()]
         issn_list = list(set(issn_list))
-        
-        # If we have a list but no print/electronic identified, use the first as electronic
-        # (modern journals often only have electronic ISSN)
-        if not issn_print and not issn_electronic and issn_list:
-            issn_electronic = issn_list[0]
     
-    # Check WoS and Scopus indexing
+    # Check WoS and Scopus indexing using all available ISSNs
     wos_info, scopus_info = check_issn_in_databases(issn_print, issn_electronic, issn_list)
     
     enriched = {
@@ -3165,6 +3169,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
