@@ -240,7 +240,7 @@ PLOT_COLOR_PALETTES = [
         'name': 'Oranges',
         'sequential': 'Oranges',
         'categorical': px.colors.sequential.Oranges,
-        'diverging': px.colors.diverging.RdYlBu
+        'diverging': px.colors.diverging.RdBu
     },
     {
         'name': 'Spectral',
@@ -255,10 +255,10 @@ PLOT_COLOR_PALETTES = [
         'diverging': px.colors.diverging.RdBu
     },
     {
-        'name': 'Portland',
-        'sequential': 'Portland',
-        'categorical': px.colors.sequential.Portland,
-        'diverging': px.colors.diverging.RdYlBu
+        'name': 'Viridis (Alternative)',
+        'sequential': 'Viridis',
+        'categorical': px.colors.sequential.Viridis,
+        'diverging': px.colors.diverging.RdBu
     },
     {
         'name': 'Electric',
@@ -3167,3 +3167,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
