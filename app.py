@@ -2638,18 +2638,21 @@ def main():
                     # Search by ROR
                     inst = get_institution_by_ror(query)
                     if inst:
-                        st.session_state['search_results'] = [inst]
-                        st.session_state['search_performed'] = True
+                        # Single result found (ROR search always returns 0 or 1)
+                        st.session_state['institution_id'] = inst['id']
+                        st.session_state['institution_name'] = inst['display_name']
+                        st.session_state['institution_ror'] = inst['ror']
+                        st.session_state['institution_country'] = inst.get('country', 'N/A')
                         
-                        st.markdown(f"""
-                        <div class="success-box">
-                            <strong>✅ Institution Found:</strong><br>
-                            {inst['display_name']}<br>
-                            ROR: {inst['ror']}<br>
-                            Country: {inst.get('country', 'N/A')}<br>
-                            Total works in OpenAlex: {inst['works_count']:,}
-                        </div>
-                        """, unsafe_allow_html=True)
+                        add_to_recent_institutions({
+                            'id': inst['id'],
+                            'name': inst['display_name'],
+                            'ror': inst['ror'],
+                            'country': inst.get('country', 'N/A')
+                        })
+                        
+                        st.session_state['step'] = 2
+                        st.rerun()
                     else:
                         st.session_state['search_results'] = []
                         st.session_state['search_performed'] = True
@@ -2661,8 +2664,28 @@ def main():
                 else:
                     # Search by name
                     results = search_institution(query)
-                    st.session_state['search_results'] = results
-                    st.session_state['search_performed'] = True
+                    
+                    # Check if exactly one result found
+                    if len(results) == 1:
+                        inst = results[0]
+                        st.session_state['institution_id'] = inst['id']
+                        st.session_state['institution_name'] = inst['display_name']
+                        st.session_state['institution_ror'] = inst['ror']
+                        st.session_state['institution_country'] = inst.get('country', 'N/A')
+                        
+                        add_to_recent_institutions({
+                            'id': inst['id'],
+                            'name': inst['display_name'],
+                            'ror': inst['ror'],
+                            'country': inst.get('country', 'N/A')
+                        })
+                        
+                        st.session_state['step'] = 2
+                        st.rerun()
+                    else:
+                        # Multiple or zero results - show selection interface
+                        st.session_state['search_results'] = results
+                        st.session_state['search_performed'] = True
         
         # Display results from session_state (if they exist)
         if st.session_state['search_performed'] and st.session_state['search_results'] is not None:
@@ -3330,6 +3353,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
