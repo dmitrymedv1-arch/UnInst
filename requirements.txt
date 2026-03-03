@@ -9,3 +9,4 @@ tenacity
 python-dateutil
 openpyxl
 xlsxwriter
+networkx
