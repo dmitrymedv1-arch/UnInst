@@ -1415,38 +1415,28 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
         if doi_lower in crossref_data:
             validation_stats['validated'] += 1
             
-            # Get the final date year for filtering (this is the print/publication year)
-            final_date_obj = crossref_data[doi_lower].get('final_date', {})
+            # Get the original date objects from Crossref data
             first_date_obj = crossref_data[doi_lower].get('first_date', {})
+            final_date_obj = crossref_data[doi_lower].get('final_date', {})
             
             # Use final date year for filtering (this is the print publication year)
             filter_year = final_date_obj.get('year') if final_date_obj else crossref_data[doi_lower].get('year')
             
-            # Create date strings from first_date and final_date
-            first_date_str = ''
-            if first_date_obj:
-                first_date_str = f"{first_date_obj.get('year', '')}-{first_date_obj.get('month', 1):02d}-{first_date_obj.get('day', 1):02d}"
-            
-            final_date_str = ''
-            if final_date_obj:
-                final_date_str = f"{final_date_obj.get('year', '')}-{final_date_obj.get('month', 1):02d}-{final_date_obj.get('day', 1):02d}"
-            else:
-                # Fallback to first_date if no final_date
-                final_date_str = first_date_str
-            
             # Get the date from OpenAlex if available
             openalex_date = paper.get('publication_date', '')
             
+            # STORE THE ORIGINAL DATE OBJECTS, NOT STRINGS
             paper['_validation'] = {
                 'source': 'crossref',
                 'year': filter_year,
                 'original_year': paper.get('publication_year'),
                 'kept': filter_year in target_years,
                 'crossref_doi': crossref_data[doi_lower]['doi'],
-                'first_date': first_date_str,
+                'first_date_obj': first_date_obj,  # Store the full date object
+                'final_date_obj': final_date_obj,  # Store the full date object
                 'first_date_source': first_date_obj.get('source', '') if first_date_obj else '',
-                'final_date': final_date_str or openalex_date or first_date_str,
                 'final_date_source': final_date_obj.get('source', '') if final_date_obj else first_date_obj.get('source', '') if first_date_obj else 'openalex',
+                'openalex_date': openalex_date,
                 'crossref_publisher': crossref_data[doi_lower].get('publisher', ''),
                 'issn_print': crossref_data[doi_lower].get('issn_print', ''),
                 'issn_electronic': crossref_data[doi_lower].get('issn_electronic', ''),
@@ -1524,7 +1514,6 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
                 if oa_issn_list and isinstance(oa_issn_list, list):
                     issn_list = oa_issn_list
                     
-                    # Try to identify print/electronic from OpenAlex
                     # OpenAlex sometimes has issn_l (linking ISSN) and other variants
                     if 'issn_l' in source and source['issn_l']:
                         if source['issn_l'] not in issn_list:
@@ -1560,6 +1549,25 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
     # Check WoS and Scopus indexing using all available ISSNs
     wos_info, scopus_info = check_issn_in_databases(issn_print, issn_electronic, issn_list)
     
+    # Format dates for display
+    first_date_display = ''
+    final_date_display = ''
+    
+    validation = paper.get('_validation', {})
+    if validation.get('first_date_obj'):
+        fd = validation['first_date_obj']
+        first_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
+    
+    if validation.get('final_date_obj'):
+        fd = validation['final_date_obj']
+        final_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
+    elif not final_date_display and validation.get('first_date_obj'):
+        # Fallback to first_date if no final_date
+        fd = validation['first_date_obj']
+        final_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
+    else:
+        final_date_display = paper.get('publication_date', '')
+    
     enriched = {
         'id': paper.get('id', ''),
         'doi': doi,
@@ -1570,7 +1578,10 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
         'referenced_works_count': paper.get('referenced_works_count', len(paper.get('referenced_works', []))),
         'type': paper.get('type', ''),
         'is_oa': paper.get('open_access', {}).get('is_oa', False),
-        'validation': paper.get('_validation', {}),
+        'validation': validation,
+        # Add formatted dates for easy access in export
+        'first_date_formatted': first_date_display,
+        'final_date_formatted': final_date_display,
         'publisher_oa': publisher_oa,
         'publisher_crossref': publisher_crossref,
         'publisher': publisher_crossref or publisher_oa or 'Unknown',
@@ -3170,8 +3181,10 @@ def main():
         export_df = pd.DataFrame([
             {
                 'DOI': p['doi'],
-                'First Date': p['validation'].get('first_date', p.get('publication_date', '')) if p.get('validation') else p.get('publication_date', ''),
-                'Final Date': p['validation'].get('final_date', p.get('publication_date', '')) if p.get('validation') else p.get('publication_date', ''),
+                'First Date': p.get('first_date_formatted', ''),
+                'Final Date': p.get('final_date_formatted', ''),
+                'First Date Source': p.get('validation', {}).get('first_date_source', '') if p.get('validation') else '',
+                'Final Date Source': p.get('validation', {}).get('final_date_source', '') if p.get('validation') else '',
                 'Authors': '; '.join(p['authors']),
                 'Title': p['title'],
                 'Journal': p['journal'],
@@ -3290,6 +3303,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
