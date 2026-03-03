@@ -696,6 +696,33 @@ def parse_crossref_date(date_parts: List) -> Optional[str]:
     except (ValueError, TypeError, IndexError):
         return None
 
+def debug_date_extraction(doi: str, item: Dict, results: Dict):
+    """Отладочная функция для проверки извлечения дат"""
+    print(f"\n=== DEBUG: Date extraction for DOI: {doi} ===")
+    
+    # Проверяем все возможные поля с датами
+    date_fields = ['published-online', 'created', 'published-print', 'issued', 'journal-issue']
+    
+    for field in date_fields:
+        if field in item:
+            if field == 'journal-issue' and 'published' in item[field]:
+                date_data = item[field]['published']
+            else:
+                date_data = item[field]
+            
+            if 'date-parts' in date_data:
+                date_parts = date_data['date-parts']
+                parsed = parse_crossref_date(date_parts)
+                print(f"  {field}: {date_parts} -> {parsed}")
+            else:
+                print(f"  {field}: present but no date-parts")
+    
+    # Проверяем результат
+    if doi.lower() in results:
+        print(f"  RESULT in results: first_date={results[doi.lower()].get('first_date')}, final_date={results[doi.lower()].get('final_date')}")
+    else:
+        print(f"  WARNING: DOI not in results yet!")
+
 def format_issn_with_hyphen(issn: str) -> Optional[str]:
     """
     Format ISSN to standard format with hyphen: XXXX-XXXX
@@ -1096,7 +1123,7 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                     if doi:
                         doi_lower = doi.lower()
                         
-                        # --- НОВАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ ДАТ ---
+                        # --- ИСПРАВЛЕННАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ ДАТ ---
                         
                         # Инициализируем переменные для дат
                         published_online_date = None
@@ -1105,41 +1132,52 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                         issued_date = None
                         journal_issue_date = None
                         
-                        # Собираем все возможные даты
+                        # Подробно логируем для первого DOI в батче (для отладки)
+                        if i == 0 and len(batch) > 0 and batch[0] == doi:
+                            print(f"\n=== Processing DOI: {doi} ===")
                         
                         # 1. published-online (приоритет для First_date)
                         if 'published-online' in item:
-                            date_parts = item['published-online'].get('date-parts')
-                            if date_parts:
+                            if 'date-parts' in item['published-online']:
+                                date_parts = item['published-online']['date-parts']
                                 published_online_date = parse_crossref_date(date_parts)
+                                if i == 0 and batch[0] == doi:
+                                    print(f"  published-online: {date_parts} -> {published_online_date}")
                         
                         # 2. created (второй приоритет для First_date)
                         if 'created' in item:
-                            date_parts = item['created'].get('date-parts')
-                            if date_parts:
+                            if 'date-parts' in item['created']:
+                                date_parts = item['created']['date-parts']
                                 created_date = parse_crossref_date(date_parts)
+                                if i == 0 and batch[0] == doi:
+                                    print(f"  created: {date_parts} -> {created_date}")
                         
                         # 3. published-print (приоритет для Final_date)
                         if 'published-print' in item:
-                            date_parts = item['published-print'].get('date-parts')
-                            if date_parts:
+                            if 'date-parts' in item['published-print']:
+                                date_parts = item['published-print']['date-parts']
                                 published_print_date = parse_crossref_date(date_parts)
+                                if i == 0 and batch[0] == doi:
+                                    print(f"  published-print: {date_parts} -> {published_print_date}")
                         
                         # 4. issued (второй приоритет для Final_date)
                         if 'issued' in item:
-                            date_parts = item['issued'].get('date-parts')
-                            if date_parts:
+                            if 'date-parts' in item['issued']:
+                                date_parts = item['issued']['date-parts']
                                 issued_date = parse_crossref_date(date_parts)
+                                if i == 0 and batch[0] == doi:
+                                    print(f"  issued: {date_parts} -> {issued_date}")
                         
                         # 5. journal-issue (третий приоритет для Final_date)
                         if 'journal-issue' in item:
-                            # journal-issue может содержать дату в разных форматах
                             if 'published' in item['journal-issue']:
-                                date_parts = item['journal-issue']['published'].get('date-parts')
-                                if date_parts:
+                                if 'date-parts' in item['journal-issue']['published']:
+                                    date_parts = item['journal-issue']['published']['date-parts']
                                     journal_issue_date = parse_crossref_date(date_parts)
+                                    if i == 0 and batch[0] == doi:
+                                        print(f"  journal-issue.published: {date_parts} -> {journal_issue_date}")
                         
-                        # Определяем First_date
+                        # Определяем First_date - выбираем самую раннюю из доступных
                         first_date = None
                         available_first_dates = []
                         
@@ -1149,27 +1187,43 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                             available_first_dates.append(created_date)
                         
                         if available_first_dates:
-                            # Выбираем самую раннюю дату
-                            first_date = min(available_first_dates)
+                            # Сортируем и берем самую раннюю
+                            available_first_dates.sort()
+                            first_date = available_first_dates[0]
+                            if i == 0 and batch[0] == doi:
+                                print(f"  available_first_dates: {available_first_dates}")
+                                print(f"  selected first_date: {first_date}")
                         
-                        # Определяем Final_date
+                        # Определяем Final_date по приоритету
                         final_date = None
                         
                         if published_print_date:
                             final_date = published_print_date
+                            if i == 0 and batch[0] == doi:
+                                print(f"  final_date from published-print: {final_date}")
                         elif issued_date:
                             final_date = issued_date
+                            if i == 0 and batch[0] == doi:
+                                print(f"  final_date from issued: {final_date}")
                         elif journal_issue_date:
                             final_date = journal_issue_date
+                            if i == 0 and batch[0] == doi:
+                                print(f"  final_date from journal-issue: {final_date}")
                         
-                        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+                        # --- КОНЕЦ ИСПРАВЛЕННОЙ ЛОГИКИ ---
                         
                         # Извлекаем год для обратной совместимости
                         publication_year = None
                         if first_date:
-                            publication_year = int(first_date[:4])
+                            try:
+                                publication_year = int(first_date[:4])
+                            except (ValueError, TypeError):
+                                pass
                         elif final_date:
-                            publication_year = int(final_date[:4])
+                            try:
+                                publication_year = int(final_date[:4])
+                            except (ValueError, TypeError):
+                                pass
                         
                         # Extract ISSN information from Crossref
                         issn_print = None
@@ -1180,7 +1234,7 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                         if 'ISSN' in item and item['ISSN']:
                             issn_list = item['ISSN']
                         
-                        # Method 2: Get from issn-type (most reliable for type identification)
+                        # Method 2: Get from issn-type
                         if 'issn-type' in item and isinstance(item['issn-type'], list):
                             for issn_type in item['issn-type']:
                                 if isinstance(issn_type, dict):
@@ -1192,21 +1246,18 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                                     elif issn_type_name == 'electronic' or issn_type_name == 'e-issn':
                                         issn_electronic = issn_value
                                     
-                                    # Add to list if not already there
                                     if issn_value and issn_value not in issn_list:
                                         issn_list.append(issn_value)
                         
-                        # Method 3: If we have ISSN list but no type info, try to infer
+                        # Method 3: If we have ISSN list but no type info
                         if not issn_print and not issn_electronic and issn_list:
-                            # If only one ISSN, assume it's electronic (common for modern journals)
                             if len(issn_list) == 1:
                                 issn_electronic = issn_list[0]
-                            # If two ISSNs, assume first is print, second is electronic
                             elif len(issn_list) >= 2:
                                 issn_print = issn_list[0]
                                 issn_electronic = issn_list[1]
                         
-                        # Get container title (journal name)
+                        # Get container title
                         container_title = None
                         if 'container-title' in item and item['container-title']:
                             if isinstance(item['container-title'], list) and item['container-title']:
@@ -1214,12 +1265,13 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                             else:
                                 container_title = item['container-title']
                         
+                        # Сохраняем результаты
                         results[doi_lower] = {
                             'doi': doi,
                             'doi_lower': doi_lower,
                             'year': publication_year,
-                            'first_date': first_date,  # НОВОЕ ПОЛЕ
-                            'final_date': final_date,  # НОВОЕ ПОЛЕ
+                            'first_date': first_date,
+                            'final_date': final_date,
                             'title': item.get('title', [''])[0] if item.get('title') else '',
                             'container-title': container_title or '',
                             'publisher': item.get('publisher', ''),
@@ -1230,12 +1282,16 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                             'is_referenced_by_count': item.get('is-referenced-by-count', 0),
                             'references_count': len(item.get('reference', [])) if item.get('reference') else 0
                         }
+                        
+                        if i == 0 and batch[0] == doi:
+                            print(f"  FINAL stored: first_date={results[doi_lower]['first_date']}, final_date={results[doi_lower]['final_date']}")
+                            print("=== END DEBUG ===\n")
             
             # Rate limiting
             time.sleep(0.1)
             
         except Exception as e:
-            st.warning(f"Error validating batch {i//BATCH_SIZE + 1}: {str(e)}")
+            print(f"Error validating batch {i//BATCH_SIZE + 1}: {str(e)}")
             continue
     
     return results
@@ -1475,8 +1531,8 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
     
     if crossref_data and doi_lower in crossref_data:
         publisher_crossref = crossref_data[doi_lower].get('publisher')
-        first_date = crossref_data[doi_lower].get('first_date')  # НОВОЕ ПОЛЕ
-        final_date = crossref_data[doi_lower].get('final_date')  # НОВОЕ ПОЛЕ
+        first_date = crossref_data[doi_lower].get('first_date')
+        final_date = crossref_data[doi_lower].get('final_date')
     
     # Get ISSN from multiple sources with priority
     issn_print = None
@@ -1877,6 +1933,10 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         
         progress_bar.progress(1.0)
         status_container.text("✅ Analysis complete!")
+
+        print("\n=== DEBUG: First 5 enriched papers dates ===")
+        for i, paper in enumerate(analysis_results['enriched_papers'][:5]):
+            print(f"Paper {i+1}: DOI={paper.get('doi')}, first_date={paper.get('first_date')}, final_date={paper.get('final_date')}")
         
         time.sleep(1)
         
@@ -3270,6 +3330,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
