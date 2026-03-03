@@ -1447,34 +1447,45 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
         if doi_lower in crossref_data:
             validation_stats['validated'] += 1
             
-            # Get the original date objects from Crossref data
+            # ПОЛУЧАЕМ ОБЪЕКТЫ ДАТ ИЗ CROSSREF
             first_date_obj = crossref_data[doi_lower].get('first_date', {})
             final_date_obj = crossref_data[doi_lower].get('final_date', {})
             
-            # Ensure we have valid objects
-            if not first_date_obj:
-                first_date_obj = {}
-            if not final_date_obj:
-                final_date_obj = {}
-            
-            # Use final date year for filtering (this is the print publication year)
+            # Use final date year for filtering
             filter_year = final_date_obj.get('year') if final_date_obj else crossref_data[doi_lower].get('year')
             
-            # Get the date from OpenAlex if available
-            openalex_date = paper.get('publication_date', '')
+            # СОЗДАЕМ СТРОКИ ДЛЯ УДОБСТВА
+            first_date_str = ''
+            if first_date_obj:
+                first_date_str = f"{first_date_obj.get('year', '')}-{first_date_obj.get('month', 1):02d}-{first_date_obj.get('day', 1):02d}"
             
-            # STORE THE ORIGINAL DATE OBJECTS, NOT STRINGS
-            validation_data = {
+            final_date_str = ''
+            if final_date_obj:
+                final_date_str = f"{final_date_obj.get('year', '')}-{final_date_obj.get('month', 1):02d}-{final_date_obj.get('day', 1):02d}"
+            elif first_date_obj:
+                final_date_str = first_date_str
+            
+            # СОХРАНЯЕМ ВСЕ В validation
+            paper['_validation'] = {
                 'source': 'crossref',
                 'year': filter_year,
                 'original_year': paper.get('publication_year'),
                 'kept': filter_year in target_years,
                 'crossref_doi': crossref_data[doi_lower]['doi'],
-                'first_date_obj': first_date_obj,  # Store the full date object
-                'final_date_obj': final_date_obj,  # Store the full date object
+                
+                # СОХРАНЯЕМ ОБЪЕКТЫ ДАТ (ГЛАВНОЕ!)
+                'first_date_obj': first_date_obj,
+                'final_date_obj': final_date_obj,
+                
+                # СОХРАНЯЕМ СТРОКИ ДЛЯ УДОБСТВА
+                'first_date_str': first_date_str,
+                'final_date_str': final_date_str,
+                
+                # СОХРАНЯЕМ ИСТОЧНИКИ
                 'first_date_source': first_date_obj.get('source', '') if first_date_obj else '',
                 'final_date_source': final_date_obj.get('source', '') if final_date_obj else first_date_obj.get('source', '') if first_date_obj else 'openalex',
-                'openalex_date': openalex_date,
+                
+                'openalex_date': paper.get('publication_date', ''),
                 'crossref_publisher': crossref_data[doi_lower].get('publisher', ''),
                 'issn_print': crossref_data[doi_lower].get('issn_print', ''),
                 'issn_electronic': crossref_data[doi_lower].get('issn_electronic', ''),
@@ -1482,19 +1493,6 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
                 'is_referenced_by_count': crossref_data[doi_lower].get('is_referenced_by_count', 0),
                 'references_count': crossref_data[doi_lower].get('references_count', 0)
             }
-            
-            # Add formatted dates directly to validation for debugging
-            if first_date_obj:
-                validation_data['first_date_str'] = f"{first_date_obj.get('year', '')}-{first_date_obj.get('month', 1):02d}-{first_date_obj.get('day', 1):02d}"
-            else:
-                validation_data['first_date_str'] = ''
-                
-            if final_date_obj:
-                validation_data['final_date_str'] = f"{final_date_obj.get('year', '')}-{final_date_obj.get('month', 1):02d}-{final_date_obj.get('day', 1):02d}"
-            else:
-                validation_data['final_date_str'] = validation_data.get('first_date_str', '')
-            
-            paper['_validation'] = validation_data
             
             # Update publication year to filter_year for consistency
             paper['publication_year'] = filter_year
@@ -3393,6 +3391,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
