@@ -793,16 +793,48 @@ def load_scopus_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
                                 quartile_numbers.append(int(q_num))
                         if quartile_numbers:
                             highest_quartile = min(quartile_numbers)
-                            quartile = f'Q{highest_quartile}'
+                            # Handle cases like 10, 20, 30, 40 -> 1, 2, 3, 4
+                            if highest_quartile in [10, 20, 30, 40]:
+                                quartile = f'Q{highest_quartile // 10}'
+                            else:
+                                quartile = f'Q{highest_quartile}'
                     else:
                         # Single quartile value
                         if 'Q' in quartile_str.upper():
-                            quartile = quartile_str.upper()
+                            quartile_raw = quartile_str.upper()
+                            # Extract number after Q
+                            q_num_match = re.search(r'Q(\d+)', quartile_raw)
+                            if q_num_match:
+                                q_num = int(q_num_match.group(1))
+                                # Handle cases like Q10 -> Q1, Q20 -> Q2
+                                if q_num in [10, 20, 30, 40]:
+                                    quartile = f'Q{q_num // 10}'
+                                else:
+                                    quartile = quartile_raw
+                            else:
+                                quartile = quartile_raw
                         else:
                             # Try to extract just the number
-                            q_num = re.sub(r'[^0-9]', '', quartile_str)
-                            if q_num:
-                                quartile = f'Q{q_num}'
+                            q_num_match = re.search(r'(\d+)', quartile_str)
+                            if q_num_match:
+                                q_num = int(q_num_match.group(1))
+                                if q_num in [10, 20, 30, 40]:
+                                    quartile = f'Q{q_num // 10}'
+                                elif 1 <= q_num <= 4:
+                                    quartile = f'Q{q_num}'
+                                else:
+                                    # If number is >4, try to map to quartile
+                                    # This is a fallback
+                                    if q_num <= 25:
+                                        quartile = 'Q1'
+                                    elif q_num <= 50:
+                                        quartile = 'Q2'
+                                    elif q_num <= 75:
+                                        quartile = 'Q3'
+                                    else:
+                                        quartile = 'Q4'
+                            else:
+                                quartile = ''
                 
                 source_title = row.get('Source title', row.get('Title', ''))  # Try different column names
                 
@@ -3303,6 +3335,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
