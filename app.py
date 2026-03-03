@@ -2578,9 +2578,9 @@ def main():
         - Quartile analysis
         """)
     
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.image('logo.png', use_container_width=True)
+    st.markdown(f'<div class="main-header" style="text-align: center;">', unsafe_allow_html=True)
+    st.image('logo.png', width=300)  # Можно настроить ширину
+    st.markdown('</div>', unsafe_allow_html=True)
     
     steps = ["Institution Search", "Period Selection", "Results"]
     current_step = st.session_state['step'] - 1
@@ -3355,6 +3355,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
