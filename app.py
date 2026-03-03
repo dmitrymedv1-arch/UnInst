@@ -1062,138 +1062,46 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                     if doi:  # Safe check for None
                         doi_lower = doi.lower()
                         
-                        # Initialize date variables
-                        first_date = None
-                        final_date = None
+                        # Extract publication year
+                        publication_year = None
                         
-                        # =================================================================
-                        # FIRST DATE: Get the earliest date available
-                        # Priority: published-online > created > deposited > issued
-                        # =================================================================
-                        
-                        # Check published-online (earliest online publication)
-                        if 'published-online' in item:
-                            date_parts = item['published-online'].get('date-parts', [[]])[0]
-                            if date_parts:
-                                first_date = {
-                                    'year': date_parts[0],
-                                    'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                    'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                    'source': 'published-online'
-                                }
-                        
-                        # If no published-online, check created (date record created in Crossref)
-                        if not first_date and 'created' in item:
-                            date_parts = item['created'].get('date-parts', [[]])[0]
-                            if date_parts:
-                                first_date = {
-                                    'year': date_parts[0],
-                                    'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                    'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                    'source': 'created'
-                                }
-                        
-                        # If no created, check deposited (date deposited in Crossref)
-                        if not first_date and 'deposited' in item:
-                            date_parts = item['deposited'].get('date-parts', [[]])[0]
-                            if date_parts:
-                                first_date = {
-                                    'year': date_parts[0],
-                                    'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                    'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                    'source': 'deposited'
-                                }
-                        
-                        # If no deposited, check issued (default publication date)
-                        if not first_date and 'issued' in item:
+                        # Try to get year from issued (most common for publication date)
+                        if 'issued' in item:
                             date_parts = item['issued'].get('date-parts', [[]])[0]
                             if date_parts:
-                                first_date = {
-                                    'year': date_parts[0],
-                                    'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                    'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                    'source': 'issued'
-                                }
+                                publication_year = date_parts[0]
                         
-                        # =================================================================
-                        # FINAL DATE: Get the print/publication date
-                        # Priority: published-print > journal-issue > published > deposited > issued
-                        # =================================================================
-                        
-                        # Check published-print (print publication date)
-                        if 'published-print' in item:
+                        # If no issued, try published-print
+                        if not publication_year and 'published-print' in item:
                             date_parts = item['published-print'].get('date-parts', [[]])[0]
                             if date_parts:
-                                final_date = {
-                                    'year': date_parts[0],
-                                    'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                    'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                    'source': 'published-print'
-                                }
+                                publication_year = date_parts[0]
                         
-                        # If no published-print, check journal-issue
-                        if not final_date and 'journal-issue' in item:
-                            journal_issue = item['journal-issue']
-                            if 'published-print' in journal_issue:
-                                date_parts = journal_issue['published-print'].get('date-parts', [[]])[0]
-                                if date_parts:
-                                    final_date = {
-                                        'year': date_parts[0],
-                                        'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                        'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                        'source': 'journal-issue'
-                                    }
-                        
-                        # If no journal-issue, check published
-                        if not final_date and 'published' in item:
-                            date_parts = item['published'].get('date-parts', [[]])[0]
+                        # If no published-print, try published-online
+                        if not publication_year and 'published-online' in item:
+                            date_parts = item['published-online'].get('date-parts', [[]])[0]
                             if date_parts:
-                                final_date = {
-                                    'year': date_parts[0],
-                                    'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                    'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                    'source': 'published'
-                                }
+                                publication_year = date_parts[0]
                         
-                        # If no published, check deposited
-                        if not final_date and 'deposited' in item:
+                        # If no published-online, try created
+                        if not publication_year and 'created' in item:
+                            date_parts = item['created'].get('date-parts', [[]])[0]
+                            if date_parts:
+                                publication_year = date_parts[0]
+                        
+                        # If no created, try deposited
+                        if not publication_year and 'deposited' in item:
                             date_parts = item['deposited'].get('date-parts', [[]])[0]
                             if date_parts:
-                                final_date = {
-                                    'year': date_parts[0],
-                                    'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                    'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                    'source': 'deposited'
-                                }
+                                publication_year = date_parts[0]
                         
-                        # If no deposited, check issued
-                        if not final_date and 'issued' in item:
-                            date_parts = item['issued'].get('date-parts', [[]])[0]
-                            if date_parts:
-                                final_date = {
-                                    'year': date_parts[0],
-                                    'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                    'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                    'source': 'issued'
-                                }
-                        
-                        # If still no dates, try to use any available date
-                        if not first_date or not final_date:
-                            # Try to get from any available date field
+                        # If no date found, try any available date field
+                        if not publication_year:
                             for date_field in ['published-print', 'published-online', 'published', 'issued', 'created', 'deposited']:
                                 if date_field in item:
                                     date_parts = item[date_field].get('date-parts', [[]])[0]
                                     if date_parts:
-                                        date_obj = {
-                                            'year': date_parts[0],
-                                            'month': date_parts[1] if len(date_parts) > 1 else 1,
-                                            'day': date_parts[2] if len(date_parts) > 2 else 1,
-                                            'source': date_field
-                                        }
-                                        if not first_date:
-                                            first_date = date_obj
-                                        if not final_date:
-                                            final_date = date_obj
+                                        publication_year = date_parts[0]
                                         break
                         
                         # Extract ISSN information from Crossref
@@ -1239,26 +1147,11 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                             else:
                                 container_title = item['container-title']
                         
-                        if first_date and final_date:
+                        if publication_year:
                             results[doi_lower] = {
                                 'doi': doi,
                                 'doi_lower': doi_lower,
-                                'first_date': {
-                                    'year': first_date['year'],
-                                    'month': first_date['month'],
-                                    'day': first_date['day'],
-                                    'source': first_date['source']
-                                },
-                                'final_date': {
-                                    'year': final_date['year'],
-                                    'month': final_date['month'],
-                                    'day': final_date['day'],
-                                    'source': final_date['source']
-                                },
-                                'year': final_date['year'],  # Use final date year for filtering
-                                'month': final_date['month'],
-                                'day': final_date['day'],
-                                'source': final_date['source'],
+                                'year': publication_year,
                                 'title': item.get('title', [''])[0] if item.get('title') else '',
                                 'container-title': container_title or '',
                                 'publisher': item.get('publisher', ''),
@@ -1447,45 +1340,16 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
         if doi_lower in crossref_data:
             validation_stats['validated'] += 1
             
-            # ПОЛУЧАЕМ ОБЪЕКТЫ ДАТ ИЗ CROSSREF
-            first_date_obj = crossref_data[doi_lower].get('first_date', {})
-            final_date_obj = crossref_data[doi_lower].get('final_date', {})
+            # Get year from Crossref
+            filter_year = crossref_data[doi_lower].get('year')
             
-            # Use final date year for filtering
-            filter_year = final_date_obj.get('year') if final_date_obj else crossref_data[doi_lower].get('year')
-            
-            # СОЗДАЕМ СТРОКИ ДЛЯ УДОБСТВА
-            first_date_str = ''
-            if first_date_obj:
-                first_date_str = f"{first_date_obj.get('year', '')}-{first_date_obj.get('month', 1):02d}-{first_date_obj.get('day', 1):02d}"
-            
-            final_date_str = ''
-            if final_date_obj:
-                final_date_str = f"{final_date_obj.get('year', '')}-{final_date_obj.get('month', 1):02d}-{final_date_obj.get('day', 1):02d}"
-            elif first_date_obj:
-                final_date_str = first_date_str
-            
-            # СОХРАНЯЕМ ВСЕ В validation
+            # Store validation information
             paper['_validation'] = {
                 'source': 'crossref',
                 'year': filter_year,
                 'original_year': paper.get('publication_year'),
                 'kept': filter_year in target_years,
                 'crossref_doi': crossref_data[doi_lower]['doi'],
-                
-                # СОХРАНЯЕМ ОБЪЕКТЫ ДАТ (ГЛАВНОЕ!)
-                'first_date_obj': first_date_obj,
-                'final_date_obj': final_date_obj,
-                
-                # СОХРАНЯЕМ СТРОКИ ДЛЯ УДОБСТВА
-                'first_date_str': first_date_str,
-                'final_date_str': final_date_str,
-                
-                # СОХРАНЯЕМ ИСТОЧНИКИ
-                'first_date_source': first_date_obj.get('source', '') if first_date_obj else '',
-                'final_date_source': final_date_obj.get('source', '') if final_date_obj else first_date_obj.get('source', '') if first_date_obj else 'openalex',
-                
-                'openalex_date': paper.get('publication_date', ''),
                 'crossref_publisher': crossref_data[doi_lower].get('publisher', ''),
                 'issn_print': crossref_data[doi_lower].get('issn_print', ''),
                 'issn_electronic': crossref_data[doi_lower].get('issn_electronic', ''),
@@ -1598,61 +1462,7 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
     # Check WoS and Scopus indexing using all available ISSNs
     wos_info, scopus_info = check_issn_in_databases(issn_print, issn_electronic, issn_list)
     
-    # Format dates for display - use validation data if available
-    first_date_display = ''
-    final_date_display = ''
-    first_date_source = ''
-    final_date_source = ''
-    
     validation = paper.get('_validation', {})
-    
-    # Method 1: Try to get from validation fields (new approach)
-    if validation:
-        # Try to get first_date_str directly (added in updated filter function)
-        if 'first_date_str' in validation and validation['first_date_str']:
-            first_date_display = validation['first_date_str']
-            first_date_source = validation.get('first_date_source', '')
-        
-        # Try to get final_date_str directly
-        if 'final_date_str' in validation and validation['final_date_str']:
-            final_date_display = validation['final_date_str']
-            final_date_source = validation.get('final_date_source', '')
-        
-        # If we have date objects but no formatted strings, create them
-        if not first_date_display and validation.get('first_date_obj'):
-            fd = validation['first_date_obj']
-            if fd and isinstance(fd, dict):
-                first_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
-                first_date_source = validation.get('first_date_source', fd.get('source', ''))
-        
-        if not final_date_display and validation.get('final_date_obj'):
-            fd = validation['final_date_obj']
-            if fd and isinstance(fd, dict):
-                final_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
-                final_date_source = validation.get('final_date_source', fd.get('source', ''))
-    
-    # Method 2: If still no dates, try from crossref_data directly
-    if not first_date_display and crossref_data and doi_lower in crossref_data:
-        cr_data = crossref_data[doi_lower]
-        if cr_data.get('first_date'):
-            fd = cr_data['first_date']
-            if fd and isinstance(fd, dict):
-                first_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
-                first_date_source = fd.get('source', '')
-    
-    if not final_date_display and crossref_data and doi_lower in crossref_data:
-        cr_data = crossref_data[doi_lower]
-        if cr_data.get('final_date'):
-            fd = cr_data['final_date']
-            if fd and isinstance(fd, dict):
-                final_date_display = f"{fd.get('year', '')}-{fd.get('month', 1):02d}-{fd.get('day', 1):02d}"
-                final_date_source = fd.get('source', '')
-    
-    # Method 3: Fallback to OpenAlex date
-    if not final_date_display:
-        final_date_display = paper.get('publication_date', '')
-        if not final_date_display and first_date_display:
-            final_date_display = first_date_display
     
     enriched = {
         'id': paper.get('id', ''),
@@ -1665,11 +1475,6 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
         'type': paper.get('type', ''),
         'is_oa': paper.get('open_access', {}).get('is_oa', False),
         'validation': validation,
-        # Add formatted dates for easy access in export
-        'first_date_formatted': first_date_display,
-        'final_date_formatted': final_date_display,
-        'first_date_source': first_date_source,
-        'final_date_source': final_date_source,
         'publisher_oa': publisher_oa,
         'publisher_crossref': publisher_crossref,
         'publisher': publisher_crossref or publisher_oa or 'Unknown',
@@ -3269,12 +3074,9 @@ def main():
         export_df = pd.DataFrame([
             {
                 'DOI': p['doi'],
-                'First Date': p.get('first_date_formatted', ''),
-                'Final Date': p.get('final_date_formatted', ''),
-                'First Date Source': p.get('first_date_source', ''),
-                'Final Date Source': p.get('final_date_source', ''),
                 'Authors': '; '.join(p['authors']),
                 'Title': p['title'],
+                'Year': p['publication_year'],
                 'Journal': p['journal'],
                 'ISSN (Print)': p.get('issn_print', ''),
                 'ISSN (Electronic)': p.get('issn_electronic', ''),
@@ -3391,6 +3193,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
