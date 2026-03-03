@@ -2255,7 +2255,7 @@ def plot_citations_vs_references(papers: List[Dict], plot_palette: Dict, colors:
             ),
             line=dict(width=1, color='white')
         ),
-        text=[p['title'][:50] + '...' for p in papers],
+        text=[(p['title'][:50] + '...') if p.get('title') and isinstance(p['title'], str) else 'No title' for p in papers],
         hovertemplate='<b>%{text}</b><br>Citations: %{y}<br>References: %{x}<br>Year: %{marker.color}<extra></extra>'
     ))
     
@@ -3167,4 +3167,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
