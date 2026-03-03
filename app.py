@@ -662,6 +662,40 @@ def normalize_issn(issn: Any) -> Optional[str]:
     
     return None
 
+def parse_crossref_date(date_parts: List) -> Optional[str]:
+    """
+    Парсит дату из Crossref в формат ГГГГ-ММ-ДД.
+    Принимает date_parts в формате [год], [год, месяц] или [год, месяц, день].
+    Если день отсутствует, устанавливается 01.
+    Если месяц отсутствует, устанавливается 01.
+    """
+    if not date_parts or not isinstance(date_parts, list):
+        return None
+    
+    # Очищаем от вложенных списков, если есть
+    if date_parts and isinstance(date_parts[0], list):
+        date_parts = date_parts[0]
+    
+    if len(date_parts) == 0:
+        return None
+    
+    try:
+        year = int(date_parts[0])
+        month = int(date_parts[1]) if len(date_parts) > 1 else 1
+        day = int(date_parts[2]) if len(date_parts) > 2 else 1
+        
+        # Валидация
+        if year < 1000 or year > 2100:
+            return None
+        if month < 1 or month > 12:
+            month = 1
+        if day < 1 or day > 31:
+            day = 1
+        
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    except (ValueError, TypeError, IndexError):
+        return None
+
 def format_issn_with_hyphen(issn: str) -> Optional[str]:
     """
     Format ISSN to standard format with hyphen: XXXX-XXXX
@@ -1034,7 +1068,7 @@ def make_openalex_request(url: str, params: Optional[Dict] = None) -> Optional[D
     wait=wait_exponential(multiplier=1, max=10)
 )
 def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
-    """Make synchronous batch request to Crossref API"""
+    """Make synchronous batch request to Crossref API with enhanced date extraction"""
     if not dois:
         return {}
     
@@ -1059,50 +1093,83 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                 
                 for item in data.get('items', []):
                     doi = item.get('DOI', '')
-                    if doi:  # Safe check for None
+                    if doi:
                         doi_lower = doi.lower()
                         
-                        # Extract publication year
-                        publication_year = None
+                        # --- НОВАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ ДАТ ---
                         
-                        # Try to get year from issued (most common for publication date)
+                        # Инициализируем переменные для дат
+                        published_online_date = None
+                        created_date = None
+                        published_print_date = None
+                        issued_date = None
+                        journal_issue_date = None
+                        
+                        # Собираем все возможные даты
+                        
+                        # 1. published-online (приоритет для First_date)
+                        if 'published-online' in item:
+                            date_parts = item['published-online'].get('date-parts')
+                            if date_parts:
+                                published_online_date = parse_crossref_date(date_parts)
+                        
+                        # 2. created (второй приоритет для First_date)
+                        if 'created' in item:
+                            date_parts = item['created'].get('date-parts')
+                            if date_parts:
+                                created_date = parse_crossref_date(date_parts)
+                        
+                        # 3. published-print (приоритет для Final_date)
+                        if 'published-print' in item:
+                            date_parts = item['published-print'].get('date-parts')
+                            if date_parts:
+                                published_print_date = parse_crossref_date(date_parts)
+                        
+                        # 4. issued (второй приоритет для Final_date)
                         if 'issued' in item:
-                            date_parts = item['issued'].get('date-parts', [[]])[0]
+                            date_parts = item['issued'].get('date-parts')
                             if date_parts:
-                                publication_year = date_parts[0]
+                                issued_date = parse_crossref_date(date_parts)
                         
-                        # If no issued, try published-print
-                        if not publication_year and 'published-print' in item:
-                            date_parts = item['published-print'].get('date-parts', [[]])[0]
-                            if date_parts:
-                                publication_year = date_parts[0]
+                        # 5. journal-issue (третий приоритет для Final_date)
+                        if 'journal-issue' in item:
+                            # journal-issue может содержать дату в разных форматах
+                            if 'published' in item['journal-issue']:
+                                date_parts = item['journal-issue']['published'].get('date-parts')
+                                if date_parts:
+                                    journal_issue_date = parse_crossref_date(date_parts)
                         
-                        # If no published-print, try published-online
-                        if not publication_year and 'published-online' in item:
-                            date_parts = item['published-online'].get('date-parts', [[]])[0]
-                            if date_parts:
-                                publication_year = date_parts[0]
+                        # Определяем First_date
+                        first_date = None
+                        available_first_dates = []
                         
-                        # If no published-online, try created
-                        if not publication_year and 'created' in item:
-                            date_parts = item['created'].get('date-parts', [[]])[0]
-                            if date_parts:
-                                publication_year = date_parts[0]
+                        if published_online_date:
+                            available_first_dates.append(published_online_date)
+                        if created_date:
+                            available_first_dates.append(created_date)
                         
-                        # If no created, try deposited
-                        if not publication_year and 'deposited' in item:
-                            date_parts = item['deposited'].get('date-parts', [[]])[0]
-                            if date_parts:
-                                publication_year = date_parts[0]
+                        if available_first_dates:
+                            # Выбираем самую раннюю дату
+                            first_date = min(available_first_dates)
                         
-                        # If no date found, try any available date field
-                        if not publication_year:
-                            for date_field in ['published-print', 'published-online', 'published', 'issued', 'created', 'deposited']:
-                                if date_field in item:
-                                    date_parts = item[date_field].get('date-parts', [[]])[0]
-                                    if date_parts:
-                                        publication_year = date_parts[0]
-                                        break
+                        # Определяем Final_date
+                        final_date = None
+                        
+                        if published_print_date:
+                            final_date = published_print_date
+                        elif issued_date:
+                            final_date = issued_date
+                        elif journal_issue_date:
+                            final_date = journal_issue_date
+                        
+                        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+                        
+                        # Извлекаем год для обратной совместимости
+                        publication_year = None
+                        if first_date:
+                            publication_year = int(first_date[:4])
+                        elif final_date:
+                            publication_year = int(final_date[:4])
                         
                         # Extract ISSN information from Crossref
                         issn_print = None
@@ -1147,21 +1214,22 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                             else:
                                 container_title = item['container-title']
                         
-                        if publication_year:
-                            results[doi_lower] = {
-                                'doi': doi,
-                                'doi_lower': doi_lower,
-                                'year': publication_year,
-                                'title': item.get('title', [''])[0] if item.get('title') else '',
-                                'container-title': container_title or '',
-                                'publisher': item.get('publisher', ''),
-                                'type': item.get('type', ''),
-                                'issn_print': issn_print,
-                                'issn_electronic': issn_electronic,
-                                'issn_list': issn_list,  # Store full list for reference
-                                'is_referenced_by_count': item.get('is-referenced-by-count', 0),
-                                'references_count': len(item.get('reference', [])) if item.get('reference') else 0
-                            }
+                        results[doi_lower] = {
+                            'doi': doi,
+                            'doi_lower': doi_lower,
+                            'year': publication_year,
+                            'first_date': first_date,  # НОВОЕ ПОЛЕ
+                            'final_date': final_date,  # НОВОЕ ПОЛЕ
+                            'title': item.get('title', [''])[0] if item.get('title') else '',
+                            'container-title': container_title or '',
+                            'publisher': item.get('publisher', ''),
+                            'type': item.get('type', ''),
+                            'issn_print': issn_print,
+                            'issn_electronic': issn_electronic,
+                            'issn_list': issn_list,
+                            'is_referenced_by_count': item.get('is-referenced-by-count', 0),
+                            'references_count': len(item.get('reference', [])) if item.get('reference') else 0
+                        }
             
             # Rate limiting
             time.sleep(0.1)
@@ -1384,7 +1452,7 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
     return filtered_papers, validation_stats
 
 def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict:
-    """Enrich paper data with additional fields including ISSN from both sources"""
+    """Enrich paper data with additional fields including ISSN and dates from both sources"""
     doi = paper.get('doi', '')
     if doi and isinstance(doi, str):
         doi = doi.replace('https://doi.org/', '')
@@ -1402,8 +1470,13 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
             publisher_oa = source.get('host_organization_name') or source.get('publisher')
     
     publisher_crossref = None
+    first_date = None
+    final_date = None
+    
     if crossref_data and doi_lower in crossref_data:
         publisher_crossref = crossref_data[doi_lower].get('publisher')
+        first_date = crossref_data[doi_lower].get('first_date')  # НОВОЕ ПОЛЕ
+        final_date = crossref_data[doi_lower].get('final_date')  # НОВОЕ ПОЛЕ
     
     # Get ISSN from multiple sources with priority
     issn_print = None
@@ -1467,6 +1540,8 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
     enriched = {
         'id': paper.get('id', ''),
         'doi': doi,
+        'first_date': first_date,  # НОВОЕ ПОЛЕ
+        'final_date': final_date,  # НОВОЕ ПОЛЕ
         'title': paper.get('title', 'No title'),
         'publication_year': paper.get('publication_year'),
         'publication_date': paper.get('publication_date', ''),
@@ -3070,10 +3145,12 @@ def main():
         st.markdown("### 📥 Export Data")
         
         col1, col2, col3 = st.columns(3)
-        
+
         export_df = pd.DataFrame([
             {
                 'DOI': p['doi'],
+                'First_date': p.get('first_date', ''),  # НОВАЯ КОЛОНКА
+                'Final_date': p.get('final_date', ''),  # НОВАЯ КОЛОНКА
                 'Authors': '; '.join(p['authors']),
                 'Title': p['title'],
                 'Year': p['publication_year'],
@@ -3193,6 +3270,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
