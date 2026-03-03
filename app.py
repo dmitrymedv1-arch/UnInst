@@ -1414,23 +1414,34 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
         
         if doi_lower in crossref_data:
             validation_stats['validated'] += 1
-            crossref_year = crossref_data[doi_lower]['year']
+            
+            # Get the final date year for filtering (this is the print/publication year)
+            final_date_obj = crossref_data[doi_lower].get('final_date', {})
+            first_date_obj = crossref_data[doi_lower].get('first_date', {})
+            
+            # Use final date year for filtering (this is the print publication year)
+            filter_year = final_date_obj.get('year') if final_date_obj else crossref_data[doi_lower].get('year')
             
             # Create date strings from first_date and final_date
-            first_date_obj = crossref_data[doi_lower].get('first_date', {})
-            final_date_obj = crossref_data[doi_lower].get('final_date', {})
+            first_date_str = ''
+            if first_date_obj:
+                first_date_str = f"{first_date_obj.get('year', '')}-{first_date_obj.get('month', 1):02d}-{first_date_obj.get('day', 1):02d}"
             
-            first_date_str = f"{first_date_obj.get('year', '')}-{first_date_obj.get('month', 1):02d}-{first_date_obj.get('day', 1):02d}" if first_date_obj else ''
-            final_date_str = f"{final_date_obj.get('year', '')}-{final_date_obj.get('month', 1):02d}-{final_date_obj.get('day', 1):02d}" if final_date_obj else ''
+            final_date_str = ''
+            if final_date_obj:
+                final_date_str = f"{final_date_obj.get('year', '')}-{final_date_obj.get('month', 1):02d}-{final_date_obj.get('day', 1):02d}"
+            else:
+                # Fallback to first_date if no final_date
+                final_date_str = first_date_str
             
             # Get the date from OpenAlex if available
             openalex_date = paper.get('publication_date', '')
             
             paper['_validation'] = {
                 'source': 'crossref',
-                'year': crossref_year,
+                'year': filter_year,
                 'original_year': paper.get('publication_year'),
-                'kept': crossref_year in target_years,
+                'kept': filter_year in target_years,
                 'crossref_doi': crossref_data[doi_lower]['doi'],
                 'first_date': first_date_str,
                 'first_date_source': first_date_obj.get('source', '') if first_date_obj else '',
@@ -1444,14 +1455,15 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
                 'references_count': crossref_data[doi_lower].get('references_count', 0)
             }
             
-            paper['publication_year'] = crossref_year
+            # Update publication year to filter_year for consistency
+            paper['publication_year'] = filter_year
             
-            if crossref_year in target_years:
+            if filter_year in target_years:
                 filtered_papers.append(paper)
                 validation_stats['kept'] += 1
             else:
                 validation_stats['rejected'] += 1
-                if crossref_year != paper.get('publication_year'):
+                if filter_year != paper.get('publication_year'):
                     validation_stats['year_mismatch'] += 1
         else:
             validation_stats['not_found'] += 1
@@ -3278,6 +3290,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
