@@ -694,10 +694,8 @@ def load_wos_database() -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
     """
     Load WoS database from IF.xlsx
     """
-    # Get the directory where the current script is located
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    # Form the full path to the file
-    wos_file_path = os.path.join(script_dir, 'IF.xlsx')
+    # Look for file in current directory
+    wos_file_path = 'IF.xlsx'
     
     if not os.path.exists(wos_file_path):
         return {}, {}
@@ -3167,5 +3165,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
