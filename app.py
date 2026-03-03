@@ -2579,7 +2579,7 @@ def main():
         """)
     
     st.markdown(f'<div class="main-header" style="text-align: center;">', unsafe_allow_html=True)
-    st.image('logo.png', width=150)
+    st.image('logo.png', width=200)
     st.markdown('</div>', unsafe_allow_html=True)
     
     steps = ["Institution Search", "Period Selection", "Results"]
@@ -3355,6 +3355,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
