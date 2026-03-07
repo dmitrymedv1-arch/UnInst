@@ -1518,6 +1518,12 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
         doi = ''
     
     doi_lower = doi.lower() if doi else ''
+
+    if crossref_data and doi_lower in crossref_data:
+        print(f"DEBUG enrich: DOI={doi}")
+        print(f"  crossref_data keys: {list(crossref_data[doi_lower].keys())}")
+        print(f"  first_date in crossref_data: {crossref_data[doi_lower].get('first_date')}")
+        print(f"  final_date in crossref_data: {crossref_data[doi_lower].get('final_date')}")
     
     # Get publisher from OpenAlex (host_organization_name) or from Crossref validation
     publisher_oa = None
@@ -3357,6 +3363,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
