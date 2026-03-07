@@ -3328,41 +3328,69 @@ def main():
             )
         
         with col3:
-            json_data = json.dumps({
+            # Функция для конвертации numpy типов в стандартные Python типы
+            def convert_to_serializable(obj):
+                if isinstance(obj, (np.integer, np.int64, np.int32)):
+                    return int(obj)
+                elif isinstance(obj, (np.floating, np.float64, np.float32)):
+                    return float(obj)
+                elif isinstance(obj, np.bool_):
+                    return bool(obj)
+                elif isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                elif isinstance(obj, dict):
+                    return {key: convert_to_serializable(value) for key, value in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_to_serializable(item) for item in obj]
+                elif isinstance(obj, tuple):
+                    return tuple(convert_to_serializable(item) for item in obj)
+                elif pd.isna(obj):
+                    return None
+                else:
+                    return obj
+        
+            # Подготовка данных с конвертацией типов
+            json_data_dict = {
                 'institution': {
                     'name': st.session_state['institution_name'],
                     'ror': st.session_state['institution_ror'],
                     'country': st.session_state['institution_country']
                 },
-                'years': st.session_state['years_range'],
+                'years': [int(y) for y in st.session_state['years_range']] if st.session_state['years_range'] else [],
                 'analysis_date': datetime.now().isoformat(),
                 'summary': {
-                    'total_papers': data['total_papers'],
-                    'total_citations': data['total_citations'],
-                    'wos_papers': data['wos_papers'],
-                    'scopus_papers': data['scopus_papers'],
-                    'both_papers': data['both_papers'],
-                    'papers_with_first_date': dates_stats['Papers with First Date'],
-                    'papers_with_final_date': dates_stats['Papers with Final Date'],
-                    'validation_stats': validation,
-                    'collaboration_types': data['collaboration_types']
+                    'total_papers': int(data['total_papers']),
+                    'total_citations': int(data['total_citations']),
+                    'wos_papers': int(data['wos_papers']),
+                    'scopus_papers': int(data['scopus_papers']),
+                    'both_papers': int(data['both_papers']),
+                    'papers_with_first_date': int(dates_stats['Papers with First Date']),
+                    'papers_with_final_date': int(dates_stats['Papers with Final Date']),
+                    'validation_stats': convert_to_serializable(validation),
+                    'collaboration_types': convert_to_serializable(data['collaboration_types'])
                 },
                 'papers': [
                     {
-                        'title': p['title'],
-                        'authors': p['authors'],
-                        'year': p['publication_year'],
-                        'first_date': p.get('first_date', ''),
-                        'final_date': p.get('final_date', ''),
-                        'citations': p['cited_by_count'],
-                        'references': p.get('references_count', 0),
-                        'doi': p['doi'],
-                        'wos_indexed': p.get('wos_indexed', False),
-                        'scopus_indexed': p.get('scopus_indexed', False)
+                        'title': str(p['title']) if p['title'] else '',
+                        'authors': [str(a) for a in p['authors']] if p.get('authors') else [],
+                        'year': int(p['publication_year']) if p['publication_year'] else None,
+                        'first_date': str(p.get('first_date', '')),
+                        'final_date': str(p.get('final_date', '')),
+                        'citations': int(p['cited_by_count']) if p['cited_by_count'] else 0,
+                        'references': int(p.get('references_count', 0)),
+                        'doi': str(p['doi']) if p['doi'] else '',
+                        'wos_indexed': bool(p.get('wos_indexed', False)),
+                        'scopus_indexed': bool(p.get('scopus_indexed', False))
                     }
                     for p in data['enriched_papers'][:100]
                 ]
-            }, indent=2, ensure_ascii=False).encode('utf-8')
+            }
+            
+            # Применяем конвертацию ко всему словарю
+            json_data_dict = convert_to_serializable(json_data_dict)
+            
+            # Сериализуем в JSON
+            json_data = json.dumps(json_data_dict, indent=2, ensure_ascii=False).encode('utf-8')
             
             st.download_button(
                 label="📋 Download JSON",
@@ -3371,11 +3399,10 @@ def main():
                 mime="application/json",
                 use_container_width=True
             )
-        
-        st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
+
 
 
 
