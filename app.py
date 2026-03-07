@@ -1095,7 +1095,12 @@ def make_openalex_request(url: str, params: Optional[Dict] = None) -> Optional[D
     wait=wait_exponential(multiplier=1, max=10)
 )
 def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
-    """Make synchronous batch request to Crossref API with enhanced date extraction"""
+    """Make synchronous batch request to Crossref API with correct date extraction logic.
+    
+    Date extraction priorities:
+    - print_date: published-print -> issued -> journal-issue.published -> deposited
+    - online_date: published-online -> created
+    """
     if not dois:
         return {}
     
@@ -1123,105 +1128,48 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                     if doi:
                         doi_lower = doi.lower()
                         
-                        # --- ИСПРАВЛЕННАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ ДАТ ---
+                        # --- ИНИЦИАЛИЗАЦИЯ ПЕРЕМЕННЫХ ---
+                        online_date = None  # published-online или created
+                        print_date = None   # published-print или issued или journal-issue или deposited
                         
-                        # Инициализируем переменные для дат
-                        published_online_date = None
-                        created_date = None
-                        published_print_date = None
-                        issued_date = None
-                        journal_issue_date = None
-                        
-                        # Подробно логируем для первого DOI в батче (для отладки)
-                        if i == 0 and len(batch) > 0 and batch[0] == doi:
-                            print(f"\n=== Processing DOI: {doi} ===")
-                        
-                        # 1. published-online (приоритет для First_date)
+                        # --- ONLINE DATE (first/online version) ---
+                        # Приоритет 1: published-online
                         if 'published-online' in item:
                             if 'date-parts' in item['published-online']:
-                                date_parts = item['published-online']['date-parts']
-                                published_online_date = parse_crossref_date(date_parts)
-                                if i == 0 and batch[0] == doi:
-                                    print(f"  published-online: {date_parts} -> {published_online_date}")
+                                online_date = parse_crossref_date(item['published-online']['date-parts'])
                         
-                        # 2. created (второй приоритет для First_date)
-                        if 'created' in item:
+                        # Приоритет 2: created (если нет published-online)
+                        if not online_date and 'created' in item:
                             if 'date-parts' in item['created']:
-                                date_parts = item['created']['date-parts']
-                                created_date = parse_crossref_date(date_parts)
-                                if i == 0 and batch[0] == doi:
-                                    print(f"  created: {date_parts} -> {created_date}")
+                                online_date = parse_crossref_date(item['created']['date-parts'])
                         
-                        # 3. published-print (приоритет для Final_date)
+                        # --- PRINT DATE (final published version) ---
+                        # Приоритет 1: published-print
                         if 'published-print' in item:
                             if 'date-parts' in item['published-print']:
-                                date_parts = item['published-print']['date-parts']
-                                published_print_date = parse_crossref_date(date_parts)
-                                if i == 0 and batch[0] == doi:
-                                    print(f"  published-print: {date_parts} -> {published_print_date}")
+                                print_date = parse_crossref_date(item['published-print']['date-parts'])
                         
-                        # 4. issued (второй приоритет для Final_date)
-                        if 'issued' in item:
+                        # Приоритет 2: issued (если нет published-print)
+                        if not print_date and 'issued' in item:
                             if 'date-parts' in item['issued']:
-                                date_parts = item['issued']['date-parts']
-                                issued_date = parse_crossref_date(date_parts)
-                                if i == 0 and batch[0] == doi:
-                                    print(f"  issued: {date_parts} -> {issued_date}")
+                                print_date = parse_crossref_date(item['issued']['date-parts'])
                         
-                        # 5. journal-issue (третий приоритет для Final_date)
-                        if 'journal-issue' in item:
+                        # Приоритет 3: journal-issue.published (если нет issued)
+                        if not print_date and 'journal-issue' in item:
                             if 'published' in item['journal-issue']:
                                 if 'date-parts' in item['journal-issue']['published']:
-                                    date_parts = item['journal-issue']['published']['date-parts']
-                                    journal_issue_date = parse_crossref_date(date_parts)
-                                    if i == 0 and batch[0] == doi:
-                                        print(f"  journal-issue.published: {date_parts} -> {journal_issue_date}")
+                                    print_date = parse_crossref_date(item['journal-issue']['published']['date-parts'])
                         
-                        # Определяем First_date - выбираем самую раннюю из доступных
-                        first_date = None
-                        available_first_dates = []
+                        # Приоритет 4: deposited (если нет других дат публикации)
+                        if not print_date and 'deposited' in item:
+                            if 'date-parts' in item['deposited']:
+                                print_date = parse_crossref_date(item['deposited']['date-parts'])
                         
-                        if published_online_date:
-                            available_first_dates.append(published_online_date)
-                        if created_date:
-                            available_first_dates.append(created_date)
-                        
-                        if available_first_dates:
-                            # Сортируем и берем самую раннюю
-                            available_first_dates.sort()
-                            first_date = available_first_dates[0]
-                            if i == 0 and batch[0] == doi:
-                                print(f"  available_first_dates: {available_first_dates}")
-                                print(f"  selected first_date: {first_date}")
-                        
-                        # Определяем Final_date по приоритету
-                        final_date = None
-                        
-                        if published_print_date:
-                            final_date = published_print_date
-                            if i == 0 and batch[0] == doi:
-                                print(f"  final_date from published-print: {final_date}")
-                        elif issued_date:
-                            final_date = issued_date
-                            if i == 0 and batch[0] == doi:
-                                print(f"  final_date from issued: {final_date}")
-                        elif journal_issue_date:
-                            final_date = journal_issue_date
-                            if i == 0 and batch[0] == doi:
-                                print(f"  final_date from journal-issue: {final_date}")
-                        
-                        # --- КОНЕЦ ИСПРАВЛЕННОЙ ЛОГИКИ ---
-                        
-                        # Извлекаем год для обратной совместимости
+                        # --- ИЗВЛЕЧЕНИЕ ГОДА ИЗ PRINT DATE ДЛЯ ФИЛЬТРАЦИИ ---
                         publication_year = None
-                        if first_date:
+                        if print_date:
                             try:
-                                publication_year = int(first_date[:4])
-                            except (ValueError, TypeError):
-                                pass
-                        elif final_date:
-                            try:
-                                publication_year = int(final_date[:4])
+                                publication_year = int(print_date[:4])
                             except (ValueError, TypeError):
                                 pass
                         
@@ -1243,7 +1191,7 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                                     
                                     if issn_type_name == 'print':
                                         issn_print = issn_value
-                                    elif issn_type_name == 'electronic' or issn_type_name == 'e-issn':
+                                    elif issn_type_name in ['electronic', 'e-issn']:
                                         issn_electronic = issn_value
                                     
                                     if issn_value and issn_value not in issn_list:
@@ -1265,13 +1213,13 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                             else:
                                 container_title = item['container-title']
                         
-                        # Сохраняем результаты
+                        # Сохраняем результаты с правильными полями дат
                         results[doi_lower] = {
                             'doi': doi,
                             'doi_lower': doi_lower,
-                            'year': publication_year,
-                            'first_date': first_date,
-                            'final_date': final_date,
+                            'year': publication_year,  # Год из print_date для фильтрации
+                            'online_date': online_date,  # Дата онлайн-публикации
+                            'print_date': print_date,    # Дата печатной публикации
                             'title': item.get('title', [''])[0] if item.get('title') else '',
                             'container-title': container_title or '',
                             'publisher': item.get('publisher', ''),
@@ -1282,10 +1230,6 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                             'is_referenced_by_count': item.get('is-referenced-by-count', 0),
                             'references_count': len(item.get('reference', [])) if item.get('reference') else 0
                         }
-                        
-                        if i == 0 and batch[0] == doi:
-                            print(f"  FINAL stored: first_date={results[doi_lower]['first_date']}, final_date={results[doi_lower]['final_date']}")
-                            print("=== END DEBUG ===\n")
             
             # Rate limiting
             time.sleep(0.1)
@@ -1424,7 +1368,10 @@ def extract_dois_from_papers(papers: List[Dict]) -> List[str]:
     return dois
 
 def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, Dict], target_years: List[int]) -> Tuple[List[Dict], Dict]:
-    """Filter papers by actual publication years from Crossref"""
+    """
+    Filter papers by actual publication years from Crossref.
+    Uses print_date (published-print -> issued -> journal-issue -> deposited) for filtering.
+    """
     filtered_papers = []
     validation_stats = {
         'total': len(papers),
@@ -1446,10 +1393,12 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
         
         if not doi:
             validation_stats['no_doi'] += 1
+            # Для статей без DOI используем год из OpenAlex (с предупреждением)
             paper['_validation'] = {
                 'source': 'openalex_only',
-                'year': paper.get('publication_year'),
-                'kept': paper.get('publication_year') in target_years
+                'openalex_year': paper.get('publication_year'),
+                'kept': paper.get('publication_year') in target_years,
+                'note': 'No DOI, using OpenAlex year'
             }
             if paper.get('publication_year') in target_years:
                 filtered_papers.append(paper)
@@ -1464,19 +1413,21 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
         if doi_lower in crossref_data:
             validation_stats['validated'] += 1
             
-            # Get year from Crossref
+            # Получаем год из print_date (опубликованная версия)
             filter_year = crossref_data[doi_lower].get('year')
+            print_date = crossref_data[doi_lower].get('print_date')
+            online_date = crossref_data[doi_lower].get('online_date')
             
-            # Store validation information
+            # Сохраняем всю информацию о валидации
             paper['_validation'] = {
                 'source': 'crossref',
-                'year': filter_year,
-                'original_year': paper.get('publication_year'),
-                'kept': filter_year in target_years,
+                'filter_year': filter_year,  # Год для фильтрации (из print_date)
+                'openalex_year': paper.get('publication_year'),
+                'print_date': print_date,
+                'online_date': online_date,
+                'kept': filter_year in target_years if filter_year else False,
                 'crossref_doi': crossref_data[doi_lower]['doi'],
                 'crossref_publisher': crossref_data[doi_lower].get('publisher', ''),
-                'first_date': crossref_data[doi_lower].get('first_date'),
-                'final_date': crossref_data[doi_lower].get('final_date'),
                 'issn_print': crossref_data[doi_lower].get('issn_print', ''),
                 'issn_electronic': crossref_data[doi_lower].get('issn_electronic', ''),
                 'issn_list': crossref_data[doi_lower].get('issn_list', []),
@@ -1484,22 +1435,22 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
                 'references_count': crossref_data[doi_lower].get('references_count', 0)
             }
             
-            # Update publication year to filter_year for consistency
-            paper['publication_year'] = filter_year
-            
-            if filter_year in target_years:
+            # Фильтруем по году из print_date
+            if filter_year and filter_year in target_years:
                 filtered_papers.append(paper)
                 validation_stats['kept'] += 1
             else:
                 validation_stats['rejected'] += 1
-                if filter_year != paper.get('publication_year'):
+                if filter_year and filter_year != paper.get('publication_year'):
                     validation_stats['year_mismatch'] += 1
         else:
             validation_stats['not_found'] += 1
+            # DOI не найден в Crossref, используем OpenAlex год
             paper['_validation'] = {
                 'source': 'openalex_only',
-                'year': paper.get('publication_year'),
-                'kept': paper.get('publication_year') in target_years
+                'openalex_year': paper.get('publication_year'),
+                'kept': paper.get('publication_year') in target_years,
+                'note': 'DOI not found in Crossref'
             }
             if paper.get('publication_year') in target_years:
                 filtered_papers.append(paper)
@@ -1510,7 +1461,7 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
     return filtered_papers, validation_stats
 
 def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict:
-    """Enrich paper data with additional fields including ISSN and dates from both sources"""
+    """Enrich paper data with additional fields including dates from Crossref."""
     doi = paper.get('doi', '')
     if doi and isinstance(doi, str):
         doi = doi.replace('https://doi.org/', '')
@@ -1518,14 +1469,8 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
         doi = ''
     
     doi_lower = doi.lower() if doi else ''
-
-    if crossref_data and doi_lower in crossref_data:
-        print(f"DEBUG enrich: DOI={doi}")
-        print(f"  crossref_data keys: {list(crossref_data[doi_lower].keys())}")
-        print(f"  first_date in crossref_data: {crossref_data[doi_lower].get('first_date')}")
-        print(f"  final_date in crossref_data: {crossref_data[doi_lower].get('final_date')}")
     
-    # Get publisher from OpenAlex (host_organization_name) or from Crossref validation
+    # Get publisher from OpenAlex
     publisher_oa = None
     primary_location = paper.get('primary_location')
     if primary_location and isinstance(primary_location, dict):
@@ -1533,21 +1478,23 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
         if source and isinstance(source, dict):
             publisher_oa = source.get('host_organization_name') or source.get('publisher')
     
+    # Initialize date variables
+    online_date = None  # published-online or created
+    print_date = None   # published-print or issued or journal-issue or deposited
     publisher_crossref = None
-    first_date = None
-    final_date = None
     
+    # Get dates from Crossref if available
     if crossref_data and doi_lower in crossref_data:
         publisher_crossref = crossref_data[doi_lower].get('publisher')
-        first_date = crossref_data[doi_lower].get('first_date')
-        final_date = crossref_data[doi_lower].get('final_date')
+        online_date = crossref_data[doi_lower].get('online_date')
+        print_date = crossref_data[doi_lower].get('print_date')
     
-    # Get ISSN from multiple sources with priority
+    # Get ISSN from multiple sources
     issn_print = None
     issn_electronic = None
     issn_list = []
     
-    # Source 1: Data from Crossref (already processed)
+    # Source 1: Data from Crossref
     if crossref_data and doi_lower in crossref_data:
         issn_print = crossref_data[doi_lower].get('issn_print')
         issn_electronic = crossref_data[doi_lower].get('issn_electronic')
@@ -1559,55 +1506,42 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
         if primary_location and isinstance(primary_location, dict):
             source = primary_location.get('source')
             if source and isinstance(source, dict):
-                # OpenAlex stores ISSN in a list
                 oa_issn_list = source.get('issn', [])
                 if oa_issn_list and isinstance(oa_issn_list, list):
                     issn_list = oa_issn_list
-                    
-                    # OpenAlex sometimes has issn_l (linking ISSN) and other variants
                     if 'issn_l' in source and source['issn_l']:
                         if source['issn_l'] not in issn_list:
                             issn_list.append(source['issn_l'])
     
-    # Source 3: Check other possible places for ISSN in OpenAlex
-    if not issn_list and not issn_print and not issn_electronic:
-        # Sometimes ISSN may be in other fields
-        if 'issn' in paper:
-            issn_val = paper.get('issn')
-            if issn_val:
-                if isinstance(issn_val, list):
-                    issn_list.extend(issn_val)
-                else:
-                    issn_list.append(issn_val)
-        
-        # Check in bibliographic information
-        biblio = paper.get('biblio', {})
-        if biblio:
-            if 'issn' in biblio:
-                issn_val = biblio.get('issn')
-                if issn_val:
-                    if isinstance(issn_val, list):
-                        issn_list.extend(issn_val)
-                    else:
-                        issn_list.append(issn_val)
-    
-    # Clean ISSN list from duplicates and empty values
+    # Clean ISSN list
     if issn_list:
         issn_list = [issn for issn in issn_list if issn and str(issn).strip()]
         issn_list = list(set(issn_list))
     
-    # Check WoS and Scopus indexing using all available ISSNs
+    # Check WoS and Scopus indexing
     wos_info, scopus_info = check_issn_in_databases(issn_print, issn_electronic, issn_list)
     
     validation = paper.get('_validation', {})
     
+    # Determine which year to use for display
+    display_year = None
+    if print_date:
+        try:
+            display_year = int(print_date[:4])
+        except (ValueError, TypeError):
+            display_year = paper.get('publication_year')
+    else:
+        display_year = paper.get('publication_year')
+    
     enriched = {
         'id': paper.get('id', ''),
         'doi': doi,
-        'first_date': first_date,  # НОВОЕ ПОЛЕ
-        'final_date': final_date,  # НОВОЕ ПОЛЕ
+        # Date fields
+        'online_date': online_date,  # Дата онлайн-публикации
+        'print_date': print_date,    # Дата печатной публикации
+        'publication_year': display_year,  # Год для отображения (из print_date)
+        # Basic info
         'title': paper.get('title', 'No title'),
-        'publication_year': paper.get('publication_year'),
         'publication_date': paper.get('publication_date', ''),
         'cited_by_count': paper.get('cited_by_count', 0),
         'referenced_works_count': paper.get('referenced_works_count', len(paper.get('referenced_works', []))),
@@ -1617,11 +1551,12 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
         'publisher_oa': publisher_oa,
         'publisher_crossref': publisher_crossref,
         'publisher': publisher_crossref or publisher_oa or 'Unknown',
+        # ISSN info
         'issn_print': issn_print,
         'issn_electronic': issn_electronic,
-        'issn_list': issn_list,  # Store full list for reference
-        'is_referenced_by_count': paper.get('_validation', {}).get('is_referenced_by_count', 0) if paper.get('_validation') else 0,
-        'references_count': paper.get('_validation', {}).get('references_count', paper.get('referenced_works_count', 0)) if paper.get('_validation') else paper.get('referenced_works_count', 0),
+        'issn_list': issn_list,
+        'is_referenced_by_count': validation.get('is_referenced_by_count', 0) if validation else 0,
+        'references_count': validation.get('references_count', paper.get('referenced_works_count', 0)) if validation else paper.get('referenced_works_count', 0),
         # WoS indexing info
         'wos_indexed': wos_info['indexed'],
         'wos_if': wos_info.get('if'),
@@ -1855,7 +1790,7 @@ def analyze_papers(papers: List[Dict], crossref_data: Optional[Dict] = None) -> 
 
 def run_analysis_with_progress(institution_id: str, years: List[int], total_estimated: int, 
                                 progress_container, status_container) -> bool:
-    """Run complete analysis with progress tracking"""
+    """Run complete analysis with progress tracking using correct date logic."""
     try:
         all_papers = []
         cursor = "*"
@@ -1896,7 +1831,7 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         status_container.text(f"Found {len(dois)} DOIs for validation")
         progress_bar.progress(0.45)
         
-        # Check cache for existing ISSN data
+        # Check cache for existing data
         dois_to_fetch = [doi for doi in dois if doi.lower() not in st.session_state['issn_cache']]
         
         if dois_to_fetch:
@@ -1920,12 +1855,12 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         status_container.text(f"✅ Validated {len(crossref_data)} DOIs")
         progress_bar.progress(0.7)
         
-        status_container.text("Filtering by actual publication years...")
+        status_container.text("Filtering by actual publication years (using print_date)...")
         
         filtered_papers, validation_stats = filter_papers_by_actual_years(
             all_papers,
             crossref_data,
-            years
+            years  # target_years = исходные годы пользователя [2008, 2023, 2024, 2025]
         )
         
         progress_bar.progress(0.8)
@@ -1942,9 +1877,15 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         progress_bar.progress(1.0)
         status_container.text("✅ Analysis complete!")
 
+        # Debug output for first 5 papers
         print("\n=== DEBUG: First 5 enriched papers dates ===")
         for i, paper in enumerate(analysis_results['enriched_papers'][:5]):
-            print(f"Paper {i+1}: DOI={paper.get('doi')}, first_date={paper.get('first_date')}, final_date={paper.get('final_date')}")
+            print(f"Paper {i+1}:")
+            print(f"  DOI={paper.get('doi')}")
+            print(f"  online_date={paper.get('online_date')}")
+            print(f"  print_date={paper.get('print_date')}")
+            print(f"  display_year={paper.get('publication_year')}")
+            print(f"  kept_in_analysis={paper.get('publication_year') in years}")
         
         time.sleep(1)
         
@@ -3242,11 +3183,11 @@ def main():
         export_df = pd.DataFrame([
             {
                 'DOI': p['doi'],
-                'First_date': p.get('first_date', ''),  # НОВАЯ КОЛОНКА
-                'Final_date': p.get('final_date', ''),  # НОВАЯ КОЛОНКА
+                'Online Date': p.get('online_date', ''),  # Переименовано для ясности
+                'Print Date': p.get('print_date', ''),    # Переименовано для ясности
+                'Publication Year (used for filtering)': p.get('publication_year', ''),  # Год из print_date
                 'Authors': '; '.join(p['authors']),
                 'Title': p['title'],
-                'Year': p['publication_year'],
                 'Journal': p['journal'],
                 'ISSN (Print)': p.get('issn_print', ''),
                 'ISSN (Electronic)': p.get('issn_electronic', ''),
@@ -3363,6 +3304,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
