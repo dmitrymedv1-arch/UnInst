@@ -666,7 +666,8 @@ def parse_crossref_date(date_parts: List) -> Optional[str]:
     """
     Парсит дату из Crossref в формат ГГГГ-ММ-ДД.
     Принимает date_parts в формате [год], [год, месяц] или [год, месяц, день].
-    Возвращает строку в формате YYYY-MM-DD (всегда с днем, если доступен).
+    Если день отсутствует, устанавливается 01.
+    Если месяц отсутствует, устанавливается 01.
     """
     if not date_parts or not isinstance(date_parts, list):
         return None
@@ -680,31 +681,19 @@ def parse_crossref_date(date_parts: List) -> Optional[str]:
     
     try:
         year = int(date_parts[0])
+        month = int(date_parts[1]) if len(date_parts) > 1 else 1
+        day = int(date_parts[2]) if len(date_parts) > 2 else 1
         
-        # Валидация года
+        # Валидация
         if year < 1000 or year > 2100:
             return None
-        
-        # Определяем месяц и день
-        if len(date_parts) >= 2 and date_parts[1] is not None:
-            month = int(date_parts[1])
-            if month < 1 or month > 12:
-                month = 1
-        else:
+        if month < 1 or month > 12:
             month = 1
-        
-        if len(date_parts) >= 3 and date_parts[2] is not None:
-            day = int(date_parts[2])
-            if day < 1 or day > 31:
-                day = 1
-        else:
+        if day < 1 or day > 31:
             day = 1
         
-        # Возвращаем всегда в формате YYYY-MM-DD для единообразия
         return f"{year:04d}-{month:02d}-{day:02d}"
-        
-    except (ValueError, TypeError, IndexError) as e:
-        print(f"Error parsing date: {e}")
+    except (ValueError, TypeError, IndexError):
         return None
 
 def debug_date_extraction(doi: str, item: Dict, results: Dict):
@@ -1134,57 +1123,105 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                     if doi:
                         doi_lower = doi.lower()
                         
+                        # --- ИСПРАВЛЕННАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ ДАТ ---
+                        
                         # Инициализируем переменные для дат
-                        print_date = None  # Это будет final_date
-                        online_date = None  # Это будет first_date
+                        published_online_date = None
+                        created_date = None
+                        published_print_date = None
+                        issued_date = None
+                        journal_issue_date = None
                         
-                        # Вспомогательная функция для форматирования даты
-                        def format_date(date_obj):
-                            if not date_obj:
-                                return None
-                            if 'date-parts' in date_obj:
-                                return parse_crossref_date(date_obj['date-parts'])
-                            return None
+                        # Подробно логируем для первого DOI в батче (для отладки)
+                        if i == 0 and len(batch) > 0 and batch[0] == doi:
+                            print(f"\n=== Processing DOI: {doi} ===")
                         
-                        # 1) Получаем print_date (final_date): published-print -> issued -> deposited
-                        if 'published-print' in item:
-                            print_date = format_date(item['published-print'])
-                            print(f"DEBUG: DOI {doi} - published-print found: {print_date}")
-                        
-                        if not print_date and 'issued' in item:
-                            print_date = format_date(item['issued'])
-                            if print_date:
-                                print(f"DEBUG: DOI {doi} - using issued: {print_date}")
-                        
-                        if not print_date and 'deposited' in item:
-                            deposited = item['deposited']
-                            if 'date-parts' in deposited:
-                                print_date = parse_crossref_date(deposited['date-parts'])
-                                if print_date:
-                                    print(f"DEBUG: DOI {doi} - using deposited: {print_date}")
-                        
-                        # 2) Получаем online_date (first_date): published-online -> created
+                        # 1. published-online (приоритет для First_date)
                         if 'published-online' in item:
-                            online_date = format_date(item['published-online'])
-                            print(f"DEBUG: DOI {doi} - published-online found: {online_date}")
+                            if 'date-parts' in item['published-online']:
+                                date_parts = item['published-online']['date-parts']
+                                published_online_date = parse_crossref_date(date_parts)
+                                if i == 0 and batch[0] == doi:
+                                    print(f"  published-online: {date_parts} -> {published_online_date}")
                         
-                        if not online_date and 'created' in item:
-                            created = item['created']
-                            if 'date-parts' in created:
-                                online_date = parse_crossref_date(created['date-parts'])
-                                if online_date:
-                                    print(f"DEBUG: DOI {doi} - using created: {online_date}")
+                        # 2. created (второй приоритет для First_date)
+                        if 'created' in item:
+                            if 'date-parts' in item['created']:
+                                date_parts = item['created']['date-parts']
+                                created_date = parse_crossref_date(date_parts)
+                                if i == 0 and batch[0] == doi:
+                                    print(f"  created: {date_parts} -> {created_date}")
+                        
+                        # 3. published-print (приоритет для Final_date)
+                        if 'published-print' in item:
+                            if 'date-parts' in item['published-print']:
+                                date_parts = item['published-print']['date-parts']
+                                published_print_date = parse_crossref_date(date_parts)
+                                if i == 0 and batch[0] == doi:
+                                    print(f"  published-print: {date_parts} -> {published_print_date}")
+                        
+                        # 4. issued (второй приоритет для Final_date)
+                        if 'issued' in item:
+                            if 'date-parts' in item['issued']:
+                                date_parts = item['issued']['date-parts']
+                                issued_date = parse_crossref_date(date_parts)
+                                if i == 0 and batch[0] == doi:
+                                    print(f"  issued: {date_parts} -> {issued_date}")
+                        
+                        # 5. journal-issue (третий приоритет для Final_date)
+                        if 'journal-issue' in item:
+                            if 'published' in item['journal-issue']:
+                                if 'date-parts' in item['journal-issue']['published']:
+                                    date_parts = item['journal-issue']['published']['date-parts']
+                                    journal_issue_date = parse_crossref_date(date_parts)
+                                    if i == 0 and batch[0] == doi:
+                                        print(f"  journal-issue.published: {date_parts} -> {journal_issue_date}")
+                        
+                        # Определяем First_date - выбираем самую раннюю из доступных
+                        first_date = None
+                        available_first_dates = []
+                        
+                        if published_online_date:
+                            available_first_dates.append(published_online_date)
+                        if created_date:
+                            available_first_dates.append(created_date)
+                        
+                        if available_first_dates:
+                            # Сортируем и берем самую раннюю
+                            available_first_dates.sort()
+                            first_date = available_first_dates[0]
+                            if i == 0 and batch[0] == doi:
+                                print(f"  available_first_dates: {available_first_dates}")
+                                print(f"  selected first_date: {first_date}")
+                        
+                        # Определяем Final_date по приоритету
+                        final_date = None
+                        
+                        if published_print_date:
+                            final_date = published_print_date
+                            if i == 0 and batch[0] == doi:
+                                print(f"  final_date from published-print: {final_date}")
+                        elif issued_date:
+                            final_date = issued_date
+                            if i == 0 and batch[0] == doi:
+                                print(f"  final_date from issued: {final_date}")
+                        elif journal_issue_date:
+                            final_date = journal_issue_date
+                            if i == 0 and batch[0] == doi:
+                                print(f"  final_date from journal-issue: {final_date}")
+                        
+                        # --- КОНЕЦ ИСПРАВЛЕННОЙ ЛОГИКИ ---
                         
                         # Извлекаем год для обратной совместимости
                         publication_year = None
-                        if online_date:
+                        if first_date:
                             try:
-                                publication_year = int(online_date[:4])
+                                publication_year = int(first_date[:4])
                             except (ValueError, TypeError):
                                 pass
-                        elif print_date:
+                        elif final_date:
                             try:
-                                publication_year = int(print_date[:4])
+                                publication_year = int(final_date[:4])
                             except (ValueError, TypeError):
                                 pass
                         
@@ -1228,13 +1265,13 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                             else:
                                 container_title = item['container-title']
                         
-                        # Сохраняем результаты с правильными именами полей
+                        # Сохраняем результаты
                         results[doi_lower] = {
                             'doi': doi,
                             'doi_lower': doi_lower,
                             'year': publication_year,
-                            'first_date': online_date,  # Это online_date (ранняя дата)
-                            'final_date': print_date,   # Это print_date (поздняя дата)
+                            'first_date': first_date,
+                            'final_date': final_date,
                             'title': item.get('title', [''])[0] if item.get('title') else '',
                             'container-title': container_title or '',
                             'publisher': item.get('publisher', ''),
@@ -1246,9 +1283,9 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                             'references_count': len(item.get('reference', [])) if item.get('reference') else 0
                         }
                         
-                        # Отладка: проверим, что даты сохранились
-                        if online_date or print_date:
-                            print(f"DEBUG: Saved for {doi}: first_date={online_date}, final_date={print_date}")
+                        if i == 0 and batch[0] == doi:
+                            print(f"  FINAL stored: first_date={results[doi_lower]['first_date']}, final_date={results[doi_lower]['final_date']}")
+                            print("=== END DEBUG ===\n")
             
             # Rate limiting
             time.sleep(0.1)
@@ -1257,96 +1294,6 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
             print(f"Error validating batch {i//BATCH_SIZE + 1}: {str(e)}")
             continue
     
-    print(f"DEBUG: Total results with dates: {len(results)}")
-    return results
-
-def fetch_dates_independent(dois: List[str]) -> Dict[str, Dict]:
-    """
-    НЕЗАВИСИМЫЙ метод для извлечения дат из Crossref.
-    Вызывается отдельно после основного анализа и напрямую сохраняет даты.
-    """
-    if not dois:
-        return {}
-    
-    print(f"\n=== INDEPENDENT DATE FETCHER: Processing {len(dois)} DOIs ===")
-    
-    unique_dois = list(set(dois))
-    results = {}
-    
-    for i, doi in enumerate(unique_dois):
-        if i % 10 == 0:
-            print(f"Progress: {i}/{len(unique_dois)} DOIs processed")
-        
-        try:
-            # Очищаем DOI
-            clean_doi = doi
-            if clean_doi.startswith("https://doi.org/"):
-                clean_doi = clean_doi.replace("https://doi.org/", "")
-            elif clean_doi.startswith("doi.org/"):
-                clean_doi = clean_doi.replace("doi.org/", "")
-            elif clean_doi.startswith("http://dx.doi.org/"):
-                clean_doi = clean_doi.replace("http://dx.doi.org/", "")
-            
-            # Формируем URL
-            url = f"{CROSSREF_BASE_URL}/works/{clean_doi}"
-            
-            headers = {'User-Agent': f'Institution-Analytics (mailto:{MAILTO})'}
-            
-            response = requests.get(url, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                message = data.get('message', {})
-                
-                # Извлекаем даты
-                print_date = None
-                online_date = None
-                
-                # 1) Получаем print_date: published-print -> issued -> deposited
-                if 'published-print' in message:
-                    if 'date-parts' in message['published-print']:
-                        print_date = parse_crossref_date(message['published-print']['date-parts'])
-                        print(f"DOI {doi}: found published-print: {print_date}")
-                
-                if not print_date and 'issued' in message:
-                    if 'date-parts' in message['issued']:
-                        print_date = parse_crossref_date(message['issued']['date-parts'])
-                        print(f"DOI {doi}: using issued: {print_date}")
-                
-                if not print_date and 'deposited' in message:
-                    if 'date-parts' in message['deposited']:
-                        print_date = parse_crossref_date(message['deposited']['date-parts'])
-                        print(f"DOI {doi}: using deposited: {print_date}")
-                
-                # 2) Получаем online_date: published-online -> created
-                if 'published-online' in message:
-                    if 'date-parts' in message['published-online']:
-                        online_date = parse_crossref_date(message['published-online']['date-parts'])
-                        print(f"DOI {doi}: found published-online: {online_date}")
-                
-                if not online_date and 'created' in message:
-                    if 'date-parts' in message['created']:
-                        online_date = parse_crossref_date(message['created']['date-parts'])
-                        print(f"DOI {doi}: using created: {online_date}")
-                
-                # Сохраняем результаты
-                results[doi.lower()] = {
-                    'doi': doi,
-                    'first_date': online_date,
-                    'final_date': print_date,
-                    'title': message.get('title', [''])[0] if message.get('title') else ''
-                }
-                
-                print(f"✅ SAVED: {doi} -> first={online_date}, final={print_date}")
-            
-            # Небольшая задержка
-            time.sleep(0.2)
-            
-        except Exception as e:
-            print(f"Error processing DOI {doi}: {e}")
-            continue
-    
-    print(f"\n=== INDEPENDENT DATE FETCHER COMPLETE: {len(results)} DOIs processed ===")
     return results
 
 def search_institution(query: str) -> List[Dict]:
@@ -1584,12 +1531,8 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
     
     if crossref_data and doi_lower in crossref_data:
         publisher_crossref = crossref_data[doi_lower].get('publisher')
-        first_date = crossref_data[doi_lower].get('first_date')  # Это online_date
-        final_date = crossref_data[doi_lower].get('final_date')  # Это print_date
-        
-        # Для отладки можно добавить принт
-        # if first_date or final_date:
-        #     print(f"DOI: {doi}, First: {first_date}, Final: {final_date}")
+        first_date = crossref_data[doi_lower].get('first_date')
+        final_date = crossref_data[doi_lower].get('final_date')
     
     # Get ISSN from multiple sources with priority
     issn_print = None
@@ -1653,8 +1596,8 @@ def enrich_paper_data(paper: Dict, crossref_data: Optional[Dict] = None) -> Dict
     enriched = {
         'id': paper.get('id', ''),
         'doi': doi,
-        'first_date': first_date,  # НОВОЕ ПОЛЕ - online_date
-        'final_date': final_date,  # НОВОЕ ПОЛЕ - print_date
+        'first_date': first_date,  # НОВОЕ ПОЛЕ
+        'final_date': final_date,  # НОВОЕ ПОЛЕ
         'title': paper.get('title', 'No title'),
         'publication_year': paper.get('publication_year'),
         'publication_date': paper.get('publication_date', ''),
@@ -1948,19 +1891,13 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         # Check cache for existing ISSN data
         dois_to_fetch = [doi for doi in dois if doi.lower() not in st.session_state['issn_cache']]
         
-        print(f"DEBUG: DOIs to fetch: {len(dois_to_fetch)}")
-        
         if dois_to_fetch:
             status_container.text(f"Fetching new data for {len(dois_to_fetch)} DOIs from Crossref...")
             new_crossref_data = make_crossref_request_batch(dois_to_fetch)
             
-            print(f"DEBUG: New Crossref data received: {len(new_crossref_data)} items")
-            
             # Update cache
             for doi_lower, data in new_crossref_data.items():
                 st.session_state['issn_cache'][doi_lower] = data
-                if data.get('first_date') or data.get('final_date'):
-                    print(f"DEBUG: Cached {doi_lower}: first={data.get('first_date')}, final={data.get('final_date')}")
         else:
             status_container.text("Using cached data for all DOIs")
             new_crossref_data = {}
@@ -1971,14 +1908,6 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
             doi_lower = doi.lower()
             if doi_lower in st.session_state['issn_cache']:
                 crossref_data[doi_lower] = st.session_state['issn_cache'][doi_lower]
-        
-        print(f"DEBUG: Final crossref_data size: {len(crossref_data)}")
-        
-        # Проверим первые несколько записей в crossref_data
-        sample_dois = list(crossref_data.keys())[:5]
-        for doi_lower in sample_dois:
-            data = crossref_data[doi_lower]
-            print(f"DEBUG: Sample {doi_lower}: first={data.get('first_date')}, final={data.get('final_date')}")
         
         status_container.text(f"✅ Validated {len(crossref_data)} DOIs")
         progress_bar.progress(0.7)
@@ -1997,42 +1926,6 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         
         analysis_results = analyze_papers(filtered_papers, crossref_data)
         
-        status_container.text("Extracting dates independently...")
-        
-        # Собираем все DOI
-        all_dois = [p.get('doi', '') for p in filtered_papers if p.get('doi')]
-        
-        if all_dois:
-            # Вызываем независимый метод
-            independent_dates = fetch_dates_independent(all_dois)
-            
-            print(f"\n=== MERGING DATES into enriched_papers ===")
-            
-            # Обновляем enriched_papers с новыми датами
-            dates_updated = 0
-            for paper in analysis_results['enriched_papers']:
-                doi = paper.get('doi', '').lower()
-                if doi in independent_dates:
-                    old_first = paper.get('first_date')
-                    old_final = paper.get('final_date')
-                    
-                    paper['first_date'] = independent_dates[doi].get('first_date', '')
-                    paper['final_date'] = independent_dates[doi].get('final_date', '')
-                    
-                    if old_first != paper['first_date'] or old_final != paper['final_date']:
-                        dates_updated += 1
-                        print(f"Updated DOI {doi}: {old_first} -> {paper['first_date']}, {old_final} -> {paper['final_date']}")
-            
-            print(f"=== DATES UPDATED for {dates_updated} papers ===")
-        
-        status_container.text("✅ Date extraction complete")
-        
-        # Проверим, что даты попали в enriched_papers
-        if analysis_results['enriched_papers']:
-            print("\n=== DEBUG: First 5 enriched papers dates ===")
-            for i, paper in enumerate(analysis_results['enriched_papers'][:5]):
-                print(f"Paper {i+1}: DOI={paper.get('doi')}, first_date={paper.get('first_date')}, final_date={paper.get('final_date')}")
-        
         st.session_state['papers_data'] = analysis_results
         st.session_state['validation_stats'] = validation_stats
         st.session_state['analysis_complete'] = True
@@ -2040,6 +1933,10 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         
         progress_bar.progress(1.0)
         status_container.text("✅ Analysis complete!")
+
+        print("\n=== DEBUG: First 5 enriched papers dates ===")
+        for i, paper in enumerate(analysis_results['enriched_papers'][:5]):
+            print(f"Paper {i+1}: DOI={paper.get('doi')}, first_date={paper.get('first_date')}, final_date={paper.get('final_date')}")
         
         time.sleep(1)
         
@@ -3333,28 +3230,16 @@ def main():
         st.markdown("### 📥 Export Data")
         
         col1, col2, col3 = st.columns(3)
-        
-        # Отладка: проверим данные перед созданием DataFrame
-        print("\n=== DEBUG: Data for export ===")
-        print(f"Total enriched papers: {len(data['enriched_papers'])}")
-        
-        # Проверим наличие дат в enriched_papers
-        papers_with_dates = 0
-        for p in data['enriched_papers']:
-            if p.get('first_date') or p.get('final_date'):
-                papers_with_dates += 1
-        print(f"Papers with dates: {papers_with_dates}")
-        
-        # Создаем DataFrame с правильными колонками дат
+
         export_df = pd.DataFrame([
             {
                 'DOI': p['doi'],
-                'First Date (Online)': p.get('first_date', ''),  # Ранняя дата (online)
-                'Final Date (Print)': p.get('final_date', ''),   # Поздняя дата (print)
-                'Year': p['publication_year'],
+                'First_date': p.get('first_date', ''),  # НОВАЯ КОЛОНКА
+                'Final_date': p.get('final_date', ''),  # НОВАЯ КОЛОНКА
+                'Authors': '; '.join(p['authors']),
                 'Title': p['title'],
-                'Authors': '; '.join(p['authors']) if p.get('authors') else '',
-                'Journal': p.get('journal', ''),
+                'Year': p['publication_year'],
+                'Journal': p['journal'],
                 'ISSN (Print)': p.get('issn_print', ''),
                 'ISSN (Electronic)': p.get('issn_electronic', ''),
                 'ISSN List': ', '.join(p.get('issn_list', [])) if p.get('issn_list') else '',
@@ -3374,25 +3259,6 @@ def main():
             for p in data['enriched_papers']
         ])
         
-        # Для отладки: покажем preview в Streamlit
-        if not export_df.empty:
-            st.write("### Preview of exported data (first 10 rows):")
-            
-            # Создаем preview DataFrame только с основными колонками
-            preview_df = export_df[['DOI', 'First Date (Online)', 'Final Date (Print)', 'Year', 'Title']].head(10)
-            st.dataframe(preview_df, use_container_width=True)
-            
-            # Статистика по датам
-            dates_stats = {
-                'Total papers': len(export_df),
-                'Papers with First Date': export_df['First Date (Online)'].notna().sum() + (export_df['First Date (Online)'] != '').sum(),
-                'Papers with Final Date': export_df['Final Date (Print)'].notna().sum() + (export_df['Final Date (Print)'] != '').sum(),
-            }
-            
-            st.write("### Date Statistics:")
-            stats_df = pd.DataFrame([dates_stats])
-            st.dataframe(stats_df, use_container_width=True)
-        
         with col1:
             csv = export_df.to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -3411,7 +3277,7 @@ def main():
                 summary_data = {
                     'Metric': ['Institution', 'ROR', 'Country', 'Total Papers', 'Total Citations', 
                               'Average Citations', 'Validated DOIs', 'WoS Indexed', 'Scopus Indexed',
-                              'Both Databases', 'Papers with First Date', 'Papers with Final Date', 'Analysis Date'],
+                              'Both Databases', 'Analysis Date'],
                     'Value': [
                         st.session_state['institution_name'],
                         st.session_state['institution_ror'],
@@ -3423,8 +3289,6 @@ def main():
                         data['wos_papers'],
                         data['scopus_papers'],
                         data['both_papers'],
-                        dates_stats['Papers with First Date'],
-                        dates_stats['Papers with Final Date'],
                         datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     ]
                 }
@@ -3447,69 +3311,37 @@ def main():
             )
         
         with col3:
-            # Функция для конвертации numpy типов в стандартные Python типы
-            def convert_to_serializable(obj):
-                if isinstance(obj, (np.integer, np.int64, np.int32)):
-                    return int(obj)
-                elif isinstance(obj, (np.floating, np.float64, np.float32)):
-                    return float(obj)
-                elif isinstance(obj, np.bool_):
-                    return bool(obj)
-                elif isinstance(obj, np.ndarray):
-                    return obj.tolist()
-                elif isinstance(obj, dict):
-                    return {key: convert_to_serializable(value) for key, value in obj.items()}
-                elif isinstance(obj, list):
-                    return [convert_to_serializable(item) for item in obj]
-                elif isinstance(obj, tuple):
-                    return tuple(convert_to_serializable(item) for item in obj)
-                elif pd.isna(obj):
-                    return None
-                else:
-                    return obj
-        
-            # Подготовка данных с конвертацией типов
-            json_data_dict = {
+            json_data = json.dumps({
                 'institution': {
                     'name': st.session_state['institution_name'],
                     'ror': st.session_state['institution_ror'],
                     'country': st.session_state['institution_country']
                 },
-                'years': [int(y) for y in st.session_state['years_range']] if st.session_state['years_range'] else [],
+                'years': st.session_state['years_range'],
                 'analysis_date': datetime.now().isoformat(),
                 'summary': {
-                    'total_papers': int(data['total_papers']),
-                    'total_citations': int(data['total_citations']),
-                    'wos_papers': int(data['wos_papers']),
-                    'scopus_papers': int(data['scopus_papers']),
-                    'both_papers': int(data['both_papers']),
-                    'papers_with_first_date': int(dates_stats['Papers with First Date']),
-                    'papers_with_final_date': int(dates_stats['Papers with Final Date']),
-                    'validation_stats': convert_to_serializable(validation),
-                    'collaboration_types': convert_to_serializable(data['collaboration_types'])
+                    'total_papers': data['total_papers'],
+                    'total_citations': data['total_citations'],
+                    'wos_papers': data['wos_papers'],
+                    'scopus_papers': data['scopus_papers'],
+                    'both_papers': data['both_papers'],
+                    'validation_stats': validation,
+                    'collaboration_types': data['collaboration_types']
                 },
                 'papers': [
                     {
-                        'title': str(p['title']) if p['title'] else '',
-                        'authors': [str(a) for a in p['authors']] if p.get('authors') else [],
-                        'year': int(p['publication_year']) if p['publication_year'] else None,
-                        'first_date': str(p.get('first_date', '')),
-                        'final_date': str(p.get('final_date', '')),
-                        'citations': int(p['cited_by_count']) if p['cited_by_count'] else 0,
-                        'references': int(p.get('references_count', 0)),
-                        'doi': str(p['doi']) if p['doi'] else '',
-                        'wos_indexed': bool(p.get('wos_indexed', False)),
-                        'scopus_indexed': bool(p.get('scopus_indexed', False))
+                        'title': p['title'],
+                        'authors': p['authors'],
+                        'year': p['publication_year'],
+                        'citations': p['cited_by_count'],
+                        'references': p.get('references_count', 0),
+                        'doi': p['doi'],
+                        'wos_indexed': p.get('wos_indexed', False),
+                        'scopus_indexed': p.get('scopus_indexed', False)
                     }
                     for p in data['enriched_papers'][:100]
                 ]
-            }
-            
-            # Применяем конвертацию ко всему словарю
-            json_data_dict = convert_to_serializable(json_data_dict)
-            
-            # Сериализуем в JSON
-            json_data = json.dumps(json_data_dict, indent=2, ensure_ascii=False).encode('utf-8')
+            }, indent=2, ensure_ascii=False).encode('utf-8')
             
             st.download_button(
                 label="📋 Download JSON",
@@ -3518,29 +3350,10 @@ def main():
                 mime="application/json",
                 use_container_width=True
             )
+        
+        st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
