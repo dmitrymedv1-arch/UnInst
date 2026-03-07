@@ -1260,6 +1260,95 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
     print(f"DEBUG: Total results with dates: {len(results)}")
     return results
 
+def fetch_dates_independent(dois: List[str]) -> Dict[str, Dict]:
+    """
+    НЕЗАВИСИМЫЙ метод для извлечения дат из Crossref.
+    Вызывается отдельно после основного анализа и напрямую сохраняет даты.
+    """
+    if not dois:
+        return {}
+    
+    print(f"\n=== INDEPENDENT DATE FETCHER: Processing {len(dois)} DOIs ===")
+    
+    unique_dois = list(set(dois))
+    results = {}
+    
+    for i, doi in enumerate(unique_dois):
+        if i % 10 == 0:
+            print(f"Progress: {i}/{len(unique_dois)} DOIs processed")
+        
+        try:
+            # Очищаем DOI
+            clean_doi = doi
+            if clean_doi.startswith("https://doi.org/"):
+                clean_doi = clean_doi.replace("https://doi.org/", "")
+            elif clean_doi.startswith("doi.org/"):
+                clean_doi = clean_doi.replace("doi.org/", "")
+            elif clean_doi.startswith("http://dx.doi.org/"):
+                clean_doi = clean_doi.replace("http://dx.doi.org/", "")
+            
+            # Формируем URL
+            url = f"{CROSSREF_BASE_URL}/works/{clean_doi}"
+            
+            headers = {'User-Agent': f'Institution-Analytics (mailto:{MAILTO})'}
+            
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                message = data.get('message', {})
+                
+                # Извлекаем даты
+                print_date = None
+                online_date = None
+                
+                # 1) Получаем print_date: published-print -> issued -> deposited
+                if 'published-print' in message:
+                    if 'date-parts' in message['published-print']:
+                        print_date = parse_crossref_date(message['published-print']['date-parts'])
+                        print(f"DOI {doi}: found published-print: {print_date}")
+                
+                if not print_date and 'issued' in message:
+                    if 'date-parts' in message['issued']:
+                        print_date = parse_crossref_date(message['issued']['date-parts'])
+                        print(f"DOI {doi}: using issued: {print_date}")
+                
+                if not print_date and 'deposited' in message:
+                    if 'date-parts' in message['deposited']:
+                        print_date = parse_crossref_date(message['deposited']['date-parts'])
+                        print(f"DOI {doi}: using deposited: {print_date}")
+                
+                # 2) Получаем online_date: published-online -> created
+                if 'published-online' in message:
+                    if 'date-parts' in message['published-online']:
+                        online_date = parse_crossref_date(message['published-online']['date-parts'])
+                        print(f"DOI {doi}: found published-online: {online_date}")
+                
+                if not online_date and 'created' in message:
+                    if 'date-parts' in message['created']:
+                        online_date = parse_crossref_date(message['created']['date-parts'])
+                        print(f"DOI {doi}: using created: {online_date}")
+                
+                # Сохраняем результаты
+                results[doi.lower()] = {
+                    'doi': doi,
+                    'first_date': online_date,
+                    'final_date': print_date,
+                    'title': message.get('title', [''])[0] if message.get('title') else ''
+                }
+                
+                print(f"✅ SAVED: {doi} -> first={online_date}, final={print_date}")
+            
+            # Небольшая задержка
+            time.sleep(0.2)
+            
+        except Exception as e:
+            print(f"Error processing DOI {doi}: {e}")
+            continue
+    
+    print(f"\n=== INDEPENDENT DATE FETCHER COMPLETE: {len(results)} DOIs processed ===")
+    return results
+
 def search_institution(query: str) -> List[Dict]:
     """Search for institutions in OpenAlex"""
     params = {
@@ -1907,6 +1996,36 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         status_container.text("Analyzing data and checking WoS/Scopus indexing...")
         
         analysis_results = analyze_papers(filtered_papers, crossref_data)
+        
+        status_container.text("Extracting dates independently...")
+        
+        # Собираем все DOI
+        all_dois = [p.get('doi', '') for p in filtered_papers if p.get('doi')]
+        
+        if all_dois:
+            # Вызываем независимый метод
+            independent_dates = fetch_dates_independent(all_dois)
+            
+            print(f"\n=== MERGING DATES into enriched_papers ===")
+            
+            # Обновляем enriched_papers с новыми датами
+            dates_updated = 0
+            for paper in analysis_results['enriched_papers']:
+                doi = paper.get('doi', '').lower()
+                if doi in independent_dates:
+                    old_first = paper.get('first_date')
+                    old_final = paper.get('final_date')
+                    
+                    paper['first_date'] = independent_dates[doi].get('first_date', '')
+                    paper['final_date'] = independent_dates[doi].get('final_date', '')
+                    
+                    if old_first != paper['first_date'] or old_final != paper['final_date']:
+                        dates_updated += 1
+                        print(f"Updated DOI {doi}: {old_first} -> {paper['first_date']}, {old_final} -> {paper['final_date']}")
+            
+            print(f"=== DATES UPDATED for {dates_updated} papers ===")
+        
+        status_container.text("✅ Date extraction complete")
         
         # Проверим, что даты попали в enriched_papers
         if analysis_results['enriched_papers']:
@@ -3402,6 +3521,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
