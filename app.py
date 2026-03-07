@@ -1149,24 +1149,31 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                         # 1) Получаем print_date (final_date): published-print -> issued -> deposited
                         if 'published-print' in item:
                             print_date = format_date(item['published-print'])
+                            print(f"DEBUG: DOI {doi} - published-print found: {print_date}")
                         
                         if not print_date and 'issued' in item:
                             print_date = format_date(item['issued'])
+                            if print_date:
+                                print(f"DEBUG: DOI {doi} - using issued: {print_date}")
                         
                         if not print_date and 'deposited' in item:
-                            # deposited хранится в другом формате
                             deposited = item['deposited']
                             if 'date-parts' in deposited:
                                 print_date = parse_crossref_date(deposited['date-parts'])
+                                if print_date:
+                                    print(f"DEBUG: DOI {doi} - using deposited: {print_date}")
                         
                         # 2) Получаем online_date (first_date): published-online -> created
                         if 'published-online' in item:
                             online_date = format_date(item['published-online'])
+                            print(f"DEBUG: DOI {doi} - published-online found: {online_date}")
                         
                         if not online_date and 'created' in item:
                             created = item['created']
                             if 'date-parts' in created:
                                 online_date = parse_crossref_date(created['date-parts'])
+                                if online_date:
+                                    print(f"DEBUG: DOI {doi} - using created: {online_date}")
                         
                         # Извлекаем год для обратной совместимости
                         publication_year = None
@@ -1238,6 +1245,10 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
                             'is_referenced_by_count': item.get('is-referenced-by-count', 0),
                             'references_count': len(item.get('reference', [])) if item.get('reference') else 0
                         }
+                        
+                        # Отладка: проверим, что даты сохранились
+                        if online_date or print_date:
+                            print(f"DEBUG: Saved for {doi}: first_date={online_date}, final_date={print_date}")
             
             # Rate limiting
             time.sleep(0.1)
@@ -1246,6 +1257,7 @@ def make_crossref_request_batch(dois: List[str]) -> Dict[str, Dict]:
             print(f"Error validating batch {i//BATCH_SIZE + 1}: {str(e)}")
             continue
     
+    print(f"DEBUG: Total results with dates: {len(results)}")
     return results
 
 def search_institution(query: str) -> List[Dict]:
@@ -1847,13 +1859,19 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         # Check cache for existing ISSN data
         dois_to_fetch = [doi for doi in dois if doi.lower() not in st.session_state['issn_cache']]
         
+        print(f"DEBUG: DOIs to fetch: {len(dois_to_fetch)}")
+        
         if dois_to_fetch:
             status_container.text(f"Fetching new data for {len(dois_to_fetch)} DOIs from Crossref...")
             new_crossref_data = make_crossref_request_batch(dois_to_fetch)
             
+            print(f"DEBUG: New Crossref data received: {len(new_crossref_data)} items")
+            
             # Update cache
             for doi_lower, data in new_crossref_data.items():
                 st.session_state['issn_cache'][doi_lower] = data
+                if data.get('first_date') or data.get('final_date'):
+                    print(f"DEBUG: Cached {doi_lower}: first={data.get('first_date')}, final={data.get('final_date')}")
         else:
             status_container.text("Using cached data for all DOIs")
             new_crossref_data = {}
@@ -1864,6 +1882,14 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
             doi_lower = doi.lower()
             if doi_lower in st.session_state['issn_cache']:
                 crossref_data[doi_lower] = st.session_state['issn_cache'][doi_lower]
+        
+        print(f"DEBUG: Final crossref_data size: {len(crossref_data)}")
+        
+        # Проверим первые несколько записей в crossref_data
+        sample_dois = list(crossref_data.keys())[:5]
+        for doi_lower in sample_dois:
+            data = crossref_data[doi_lower]
+            print(f"DEBUG: Sample {doi_lower}: first={data.get('first_date')}, final={data.get('final_date')}")
         
         status_container.text(f"✅ Validated {len(crossref_data)} DOIs")
         progress_bar.progress(0.7)
@@ -1882,6 +1908,12 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         
         analysis_results = analyze_papers(filtered_papers, crossref_data)
         
+        # Проверим, что даты попали в enriched_papers
+        if analysis_results['enriched_papers']:
+            print("\n=== DEBUG: First 5 enriched papers dates ===")
+            for i, paper in enumerate(analysis_results['enriched_papers'][:5]):
+                print(f"Paper {i+1}: DOI={paper.get('doi')}, first_date={paper.get('first_date')}, final_date={paper.get('final_date')}")
+        
         st.session_state['papers_data'] = analysis_results
         st.session_state['validation_stats'] = validation_stats
         st.session_state['analysis_complete'] = True
@@ -1889,10 +1921,6 @@ def run_analysis_with_progress(institution_id: str, years: List[int], total_esti
         
         progress_bar.progress(1.0)
         status_container.text("✅ Analysis complete!")
-
-        print("\n=== DEBUG: First 5 enriched papers dates ===")
-        for i, paper in enumerate(analysis_results['enriched_papers'][:5]):
-            print(f"Paper {i+1}: DOI={paper.get('doi')}, first_date={paper.get('first_date')}, final_date={paper.get('final_date')}")
         
         time.sleep(1)
         
@@ -3187,6 +3215,17 @@ def main():
         
         col1, col2, col3 = st.columns(3)
         
+        # Отладка: проверим данные перед созданием DataFrame
+        print("\n=== DEBUG: Data for export ===")
+        print(f"Total enriched papers: {len(data['enriched_papers'])}")
+        
+        # Проверим наличие дат в enriched_papers
+        papers_with_dates = 0
+        for p in data['enriched_papers']:
+            if p.get('first_date') or p.get('final_date'):
+                papers_with_dates += 1
+        print(f"Papers with dates: {papers_with_dates}")
+        
         # Создаем DataFrame с правильными колонками дат
         export_df = pd.DataFrame([
             {
@@ -3195,8 +3234,8 @@ def main():
                 'Final Date (Print)': p.get('final_date', ''),   # Поздняя дата (print)
                 'Year': p['publication_year'],
                 'Title': p['title'],
-                'Authors': '; '.join(p['authors']),
-                'Journal': p['journal'],
+                'Authors': '; '.join(p['authors']) if p.get('authors') else '',
+                'Journal': p.get('journal', ''),
                 'ISSN (Print)': p.get('issn_print', ''),
                 'ISSN (Electronic)': p.get('issn_electronic', ''),
                 'ISSN List': ', '.join(p.get('issn_list', [])) if p.get('issn_list') else '',
@@ -3216,10 +3255,24 @@ def main():
             for p in data['enriched_papers']
         ])
         
-        # Для отладки: проверим, есть ли даты в первых 5 записях
+        # Для отладки: покажем preview в Streamlit
         if not export_df.empty:
-            st.write("Preview of dates in exported data:")
-            st.dataframe(export_df[['DOI', 'First Date (Online)', 'Final Date (Print)', 'Year']].head())
+            st.write("### Preview of exported data (first 10 rows):")
+            
+            # Создаем preview DataFrame только с основными колонками
+            preview_df = export_df[['DOI', 'First Date (Online)', 'Final Date (Print)', 'Year', 'Title']].head(10)
+            st.dataframe(preview_df, use_container_width=True)
+            
+            # Статистика по датам
+            dates_stats = {
+                'Total papers': len(export_df),
+                'Papers with First Date': export_df['First Date (Online)'].notna().sum() + (export_df['First Date (Online)'] != '').sum(),
+                'Papers with Final Date': export_df['Final Date (Print)'].notna().sum() + (export_df['Final Date (Print)'] != '').sum(),
+            }
+            
+            st.write("### Date Statistics:")
+            stats_df = pd.DataFrame([dates_stats])
+            st.dataframe(stats_df, use_container_width=True)
         
         with col1:
             csv = export_df.to_csv(index=False).encode('utf-8')
@@ -3239,7 +3292,7 @@ def main():
                 summary_data = {
                     'Metric': ['Institution', 'ROR', 'Country', 'Total Papers', 'Total Citations', 
                               'Average Citations', 'Validated DOIs', 'WoS Indexed', 'Scopus Indexed',
-                              'Both Databases', 'Analysis Date'],
+                              'Both Databases', 'Papers with First Date', 'Papers with Final Date', 'Analysis Date'],
                     'Value': [
                         st.session_state['institution_name'],
                         st.session_state['institution_ror'],
@@ -3251,6 +3304,8 @@ def main():
                         data['wos_papers'],
                         data['scopus_papers'],
                         data['both_papers'],
+                        dates_stats['Papers with First Date'],
+                        dates_stats['Papers with Final Date'],
                         datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     ]
                 }
@@ -3287,6 +3342,8 @@ def main():
                     'wos_papers': data['wos_papers'],
                     'scopus_papers': data['scopus_papers'],
                     'both_papers': data['both_papers'],
+                    'papers_with_first_date': dates_stats['Papers with First Date'],
+                    'papers_with_final_date': dates_stats['Papers with Final Date'],
                     'validation_stats': validation,
                     'collaboration_types': data['collaboration_types']
                 },
@@ -3295,6 +3352,8 @@ def main():
                         'title': p['title'],
                         'authors': p['authors'],
                         'year': p['publication_year'],
+                        'first_date': p.get('first_date', ''),
+                        'final_date': p.get('final_date', ''),
                         'citations': p['cited_by_count'],
                         'references': p.get('references_count', 0),
                         'doi': p['doi'],
@@ -3317,6 +3376,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
