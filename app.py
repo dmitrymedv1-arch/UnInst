@@ -1475,6 +1475,8 @@ def filter_papers_by_actual_years(papers: List[Dict], crossref_data: Dict[str, D
                 'kept': filter_year in target_years,
                 'crossref_doi': crossref_data[doi_lower]['doi'],
                 'crossref_publisher': crossref_data[doi_lower].get('publisher', ''),
+                'first_date': crossref_data[doi_lower].get('first_date'),
+                'final_date': crossref_data[doi_lower].get('final_date'),
                 'issn_print': crossref_data[doi_lower].get('issn_print', ''),
                 'issn_electronic': crossref_data[doi_lower].get('issn_electronic', ''),
                 'issn_list': crossref_data[doi_lower].get('issn_list', []),
@@ -3355,5 +3357,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
