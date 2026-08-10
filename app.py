@@ -24,6 +24,8 @@ import io
 import os
 import networkx as nx
 from itertools import combinations
+import base64
+import html
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -2460,6 +2462,1335 @@ def plot_top_cited_table(papers: List[Dict], title: str, colors: Dict):
     return df
 
 # ============================================================================
+# HTML REPORT GENERATION
+# ============================================================================
+
+def get_color_for_heatmap(value: float, max_value: float) -> str:
+    """Generate color for heatmap cell based on value"""
+    if max_value == 0:
+        return '#ffffff'
+    
+    ratio = value / max_value
+    # Blue to red gradient
+    r = int(255 * ratio)
+    g = int(255 * (1 - ratio) * 0.3)
+    b = int(255 * (1 - ratio))
+    return f'rgb({r}, {g}, {b})'
+
+def generate_institution_html_report(data: Dict, validation: Dict, institution_name: str, 
+                                      institution_ror: str, institution_country: str, 
+                                      years_range: List[int], colors: Dict) -> str:
+    """Generate comprehensive HTML report for institution analysis"""
+    
+    # Extract data
+    total_papers = data['total_papers']
+    total_citations = data['total_citations']
+    wos_papers = data['wos_papers']
+    scopus_papers = data['scopus_papers']
+    both_papers = data['both_papers']
+    yearly_papers = data['yearly_papers']
+    yearly_citations = data['yearly_citations']
+    top_authors = data['top_authors']
+    top_journals = data['top_journals']
+    top_publishers = data['top_publishers']
+    citation_distribution = data['citation_distribution']
+    top_cited = data['top_cited']
+    top_citations_per_year = data['top_citations_per_year']
+    collaboration_types = data['collaboration_types']
+    yearly_collaboration = data['yearly_collaboration']
+    enriched_papers = data['enriched_papers']
+    
+    # Calculate additional metrics
+    avg_citations = total_citations / total_papers if total_papers > 0 else 0
+    neither_papers = total_papers - (wos_papers + scopus_papers - both_papers)
+    
+    # Get years from data
+    years = sorted(yearly_papers.keys())
+    min_year = min(years) if years else None
+    max_year = max(years) if years else None
+    
+    # Calculate active years
+    active_years = len(years)
+    
+    # Count unique authors, affiliations, countries
+    all_authors = set()
+    all_affiliations = set()
+    all_countries = set()
+    
+    for p in enriched_papers:
+        all_authors.update(p.get('authors', []))
+        all_affiliations.update(p.get('affiliations', []))
+        all_countries.update(p.get('author_countries', []))
+    
+    unique_authors = len(all_authors)
+    unique_affiliations = len(all_affiliations)
+    unique_countries = len(all_countries)
+    
+    # Calculate citations per year for top papers
+    current_year = datetime.now().year
+    for p in top_cited:
+        if 'citations_per_year' not in p:
+            p['citations_per_year'] = calculate_citations_per_year(
+                p.get('cited_by_count', 0), 
+                p.get('publication_year', current_year), 
+                current_year
+            )
+    
+    # Build HTML
+    primary = colors['primary']
+    secondary = colors['secondary']
+    
+    html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Institution Analysis Report - {html.escape(institution_name)}</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: 'Times New Roman', 'DejaVu Serif', serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            color: #333;
+        }}
+        .report-wrapper {{
+            max-width: 1600px;
+            margin: 0 auto;
+            background: white;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            border-radius: 10px;
+            overflow: hidden;
+        }}
+        
+        /* ===== SIDEBAR NAVIGATION ===== */
+        .sidebar {{
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 280px;
+            height: 100vh;
+            background: linear-gradient(135deg, {primary} 0%, {secondary} 100%);
+            color: white;
+            padding: 25px 18px;
+            overflow-y: auto;
+            z-index: 1000;
+            box-shadow: 2px 0 20px rgba(0,0,0,0.15);
+        }}
+        .sidebar::-webkit-scrollbar {{ width: 4px; }}
+        .sidebar::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.3); border-radius: 4px; }}
+        
+        .sidebar h3 {{
+            margin-bottom: 20px;
+            font-size: 18px;
+            font-weight: 700;
+            color: white;
+            border-bottom: 2px solid rgba(255,255,255,0.3);
+            padding-bottom: 15px;
+            letter-spacing: 0.5px;
+            word-wrap: break-word;
+        }}
+        .sidebar .nav-section {{
+            margin-top: 5px;
+        }}
+        .sidebar a {{
+            color: white;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 14px;
+            margin: 2px 0;
+            border-radius: 8px;
+            transition: all 0.3s;
+            font-size: 13px;
+        }}
+        .sidebar a:hover {{
+            background: rgba(255,255,255,0.2);
+            transform: translateX(5px);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }}
+        .sidebar a .nav-icon {{
+            font-size: 16px;
+            width: 24px;
+            text-align: center;
+        }}
+        
+        /* ===== MAIN CONTENT ===== */
+        .main-content {{
+            margin-left: 280px;
+            padding: 30px 40px;
+        }}
+        
+        /* ===== HEADER ===== */
+        .header {{
+            background: linear-gradient(135deg, {primary} 0%, {secondary} 100%);
+            color: white;
+            padding: 30px 40px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }}
+        .header-left {{
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex: 1;
+        }}
+        .header h1 {{
+            color: white;
+            border-bottom: none;
+            margin: 0;
+            font-size: 28px;
+            font-weight: 700;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            word-wrap: break-word;
+        }}
+        .header .subtitle {{
+            opacity: 0.9;
+            margin-top: 5px;
+            font-size: 14px;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.15);
+        }}
+        
+        /* ===== SECTIONS ===== */
+        .section {{
+            background: white;
+            border-radius: 15px;
+            padding: 25px 30px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            border: 1px solid #f0f0f0;
+            transition: all 0.3s;
+        }}
+        .section:hover {{
+            box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+        }}
+        
+        .section-header {{
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            user-select: none;
+            padding: 5px 0;
+        }}
+        .section-header:hover .section-title {{
+            color: {primary};
+        }}
+        .section-title {{
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #2C3E50;
+            transition: color 0.3s;
+        }}
+        .section-title .icon {{
+            font-size: 24px;
+        }}
+        .section-title .section-badge {{
+            background: linear-gradient(135deg, {primary}, {secondary});
+            color: white;
+            padding: 2px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-left: 8px;
+        }}
+        .section-divider {{
+            height: 3px;
+            background: linear-gradient(90deg, {primary}, {secondary}, transparent);
+            margin: 15px 0 20px 0;
+            border-radius: 3px;
+        }}
+        .toggle-indicator {{
+            font-size: 18px;
+            transition: transform 0.3s;
+            color: {primary};
+            font-weight: 300;
+        }}
+        .toggle-indicator.collapsed {{
+            transform: rotate(-90deg);
+        }}
+        .section-content {{
+            display: block;
+            transition: all 0.4s ease;
+        }}
+        .section-content.collapsed {{
+            display: none;
+        }}
+        
+        /* ===== METRICS GRID ===== */
+        .metrics-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+            margin: 15px 0;
+        }}
+        .metric-card {{
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            padding: 14px 18px;
+            border-radius: 12px;
+            border-left: 4px solid {primary};
+            text-align: center;
+            transition: all 0.3s;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+            position: relative;
+            overflow: hidden;
+        }}
+        .metric-card::after {{
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, transparent 50%, {primary}08 100%);
+            border-radius: 0 12px 0 60px;
+        }}
+        .metric-card:hover {{
+            transform: translateY(-4px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+            border-left-color: {secondary};
+        }}
+        .metric-card .metric-icon {{
+            font-size: 20px;
+            display: block;
+            margin-bottom: 4px;
+        }}
+        .metric-value {{
+            font-size: 26px;
+            font-weight: 700;
+            color: #2C3E50;
+            font-family: 'Times New Roman', serif;
+            background: linear-gradient(135deg, {primary}, {secondary});
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }}
+        .metric-label {{
+            font-size: 11px;
+            color: #7F8C8D;
+            margin-top: 4px;
+            font-family: 'Times New Roman', serif;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }}
+        
+        /* ===== PROGRESS BARS ===== */
+        .progress-bar-container {{
+            width: 100%;
+            background-color: #f0f0f0;
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 4px 0;
+            height: 22px;
+            position: relative;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+        }}
+        .progress-bar-fill {{
+            height: 100%;
+            border-radius: 8px;
+            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 11px;
+            font-weight: 700;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+            position: relative;
+            overflow: hidden;
+            min-width: 30px;
+        }}
+        .progress-bar-fill.animate {{
+            animation: shimmer 2s infinite linear;
+            background-size: 200% 100%;
+        }}
+        @keyframes shimmer {{
+            0% {{ background-position: -200% 0; }}
+            100% {{ background-position: 200% 0; }}
+        }}
+        
+        .progress-bar-label {{
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            margin: 2px 0 1px 0;
+            color: #555;
+            font-weight: 500;
+        }}
+        .progress-bar-label .label-value {{
+            font-weight: 700;
+            color: #2C3E50;
+        }}
+        
+        /* ===== TABLES ===== */
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+            font-family: 'Times New Roman', serif;
+            font-size: 13px;
+        }}
+        th {{
+            background: linear-gradient(135deg, {primary} 0%, {secondary} 100%);
+            color: white;
+            padding: 10px 14px;
+            text-align: left;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            white-space: nowrap;
+        }}
+        th.sortable {{
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+        }}
+        th.sortable:hover {{
+            opacity: 0.9;
+        }}
+        th.sortable::after {{
+            content: ' ↕';
+            opacity: 0.5;
+            font-size: 10px;
+        }}
+        td {{
+            padding: 8px 14px;
+            border-bottom: 1px solid #e9ecef;
+            vertical-align: middle;
+            transition: background 0.2s;
+        }}
+        tr:hover td {{
+            background-color: #f8f9fa;
+        }}
+        .scrollable-table {{
+            max-height: 500px;
+            overflow-y: auto;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }}
+        .scrollable-table thead {{
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }}
+        
+        .citation-count {{
+            background: linear-gradient(135deg, {primary}15, {secondary}15);
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-weight: 700;
+            color: {primary};
+        }}
+        
+        .doi-link {{
+            color: #2980B9;
+            text-decoration: none;
+            font-size: 11px;
+            word-break: break-all;
+            transition: color 0.2s;
+        }}
+        .doi-link:hover {{
+            color: {primary};
+            text-decoration: underline;
+        }}
+        
+        .badge {{
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin: 1px 2px;
+        }}
+        .badge-success {{ background: #2ECC71; color: white; }}
+        .badge-warning {{ background: #F39C12; color: white; }}
+        .badge-danger {{ background: #E74C3C; color: white; }}
+        .badge-primary {{ background: {primary}; color: white; }}
+        .badge-info {{ background: #3498DB; color: white; }}
+        
+        .color-scale-value {{
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 8px;
+            font-weight: 600;
+            text-align: center;
+            min-width: 30px;
+            transition: all 0.2s;
+        }}
+        .color-scale-value:hover {{
+            transform: scale(1.05);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        
+        .word-wrap {{
+            word-wrap: break-word;
+            max-width: 300px;
+        }}
+        
+        .footer {{
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 2px solid #e9ecef;
+            text-align: center;
+            color: #7F8C8D;
+            font-size: 12px;
+        }}
+        .footer a {{
+            color: {primary};
+            text-decoration: none;
+        }}
+        .footer a:hover {{
+            text-decoration: underline;
+        }}
+        
+        .filter-section {{
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            padding: 15px 20px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #e9ecef;
+        }}
+        .filter-row {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+        }}
+        .filter-row .filter-group {{
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: white;
+            padding: 4px 10px 4px 12px;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }}
+        .filter-row label {{
+            font-size: 11px;
+            font-weight: 600;
+            color: #555;
+            white-space: nowrap;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }}
+        .filter-row select, .filter-row input {{
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: 'Times New Roman', serif;
+            background: transparent;
+            outline: none;
+        }}
+        .filter-row select:focus, .filter-row input:focus {{
+            box-shadow: 0 0 0 2px {primary}40;
+        }}
+        .filter-row input[type="text"] {{
+            width: 130px;
+        }}
+        .filter-row input[type="number"] {{
+            width: 70px;
+        }}
+        .filter-stats {{
+            margin-top: 10px;
+            font-size: 13px;
+            color: #555;
+            padding: 6px 12px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+            display: inline-block;
+        }}
+        .filter-stats strong {{
+            color: #2C3E50;
+        }}
+        
+        .geo-grid {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 15px 0;
+        }}
+        .geo-card {{
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            padding: 16px 20px;
+            border-radius: 10px;
+            border: 1px solid #e9ecef;
+            transition: all 0.3s;
+        }}
+        .geo-card:hover {{
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+        }}
+        .geo-card h4 {{
+            color: {primary};
+            margin-bottom: 8px;
+            font-size: 14px;
+        }}
+        .geo-card .geo-value {{
+            font-size: 18px;
+            font-weight: 700;
+            color: #2C3E50;
+        }}
+        .geo-card .geo-label {{
+            font-size: 12px;
+            color: #7F8C8D;
+        }}
+        
+        .badge-wos {{ background: #2ECC71; color: white; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }}
+        .badge-scopus {{ background: #3498DB; color: white; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }}
+        .badge-both {{ background: #9B59B6; color: white; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }}
+        .badge-none {{ background: #95A5A6; color: white; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }}
+        
+        @media print {{
+            .sidebar {{ display: none; }}
+            .main-content {{ margin-left: 0; }}
+            .section {{ box-shadow: none; border: 1px solid #ddd; }}
+            .metric-card {{ box-shadow: none; }}
+        }}
+        @media (max-width: 768px) {{
+            .sidebar {{ display: none; }}
+            .main-content {{ margin-left: 0; padding: 15px; }}
+            .header {{ flex-direction: column; text-align: center; padding: 20px; }}
+            .header-left {{ flex-direction: column; }}
+            .geo-grid {{ grid-template-columns: 1fr; }}
+            .filter-row {{ flex-direction: column; align-items: stretch; }}
+            .filter-row .filter-group {{ flex-wrap: wrap; }}
+            .metrics-grid {{ grid-template-columns: repeat(2, 1fr); }}
+        }}
+        
+        @keyframes fadeInUp {{
+            from {{ opacity: 0; transform: translateY(20px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        .section {{
+            animation: fadeInUp 0.6s ease forwards;
+        }}
+        .section:nth-child(2) {{ animation-delay: 0.1s; }}
+        .section:nth-child(3) {{ animation-delay: 0.2s; }}
+        .section:nth-child(4) {{ animation-delay: 0.3s; }}
+        .section:nth-child(5) {{ animation-delay: 0.4s; }}
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h3>{html.escape(institution_name[:40])}{'...' if len(institution_name) > 40 else ''}</h3>
+        <div class="nav-section">
+            <a href="#overview"><span class="nav-icon">📋</span> Overview</a>
+            <a href="#publications"><span class="nav-icon">📄</span> Publications</a>
+            <a href="#authors"><span class="nav-icon">👥</span> Authors</a>
+            <a href="#journals"><span class="nav-icon">📚</span> Journals</a>
+            <a href="#publishers"><span class="nav-icon">🏢</span> Publishers</a>
+            <a href="#citations"><span class="nav-icon">📈</span> Citations</a>
+            <a href="#collaborations"><span class="nav-icon">🌍</span> Collaborations</a>
+            <a href="#indexing"><span class="nav-icon">🔬</span> Indexing</a>
+            <a href="#all_publications"><span class="nav-icon">📚</span> All Publications</a>
+        </div>
+        <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 11px; opacity: 0.8; line-height: 1.6;">
+            <div>ROR: {html.escape(institution_ror)}</div>
+            <div>Country: {html.escape(institution_country)}</div>
+            <div>Period: {min_year} - {max_year}</div>
+            <div style="margin-top: 4px; font-size: 10px; opacity: 0.6;">Generated: {datetime.now().strftime('%d.%m.%Y %H:%M')}</div>
+        </div>
+    </div>
+    
+    <div class="main-content">
+        <!-- HEADER -->
+        <div class="header">
+            <div class="header-left">
+                <div>
+                    <h1>{html.escape(institution_name)}</h1>
+                    <div class="subtitle">
+                        ROR: {html.escape(institution_ror)} | Country: {html.escape(institution_country)} | Analysis Period: {min_year} - {max_year}
+                    </div>
+                    <div class="subtitle">
+                        Total Publications: {total_papers:,} | Total Citations: {total_citations:,} | Average Citations: {avg_citations:.2f}
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ============================================================ -->
+        <!-- SECTION 1: OVERVIEW -->
+        <!-- ============================================================ -->
+        <div id="overview" class="section">
+            <div class="section-header" onclick="toggleSection('overview_content')">
+                <div class="section-title">
+                    <span class="icon">📋</span> Overview
+                    <span class="section-badge">{total_papers:,} Publications</span>
+                </div>
+                <span class="toggle-indicator" id="overview_indicator">▼</span>
+            </div>
+            <div class="section-divider"></div>
+            <div id="overview_content" class="section-content">
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-value">{total_papers:,}</div>
+                        <div class="metric-label">Total Publications</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{total_citations:,}</div>
+                        <div class="metric-label">Total Citations</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{avg_citations:.2f}</div>
+                        <div class="metric-label">Average Citations</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{active_years}</div>
+                        <div class="metric-label">Active Years</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{unique_authors:,}</div>
+                        <div class="metric-label">Unique Authors</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{unique_affiliations:,}</div>
+                        <div class="metric-label">Unique Affiliations</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{unique_countries}</div>
+                        <div class="metric-label">Unique Countries</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{wos_papers:,}</div>
+                        <div class="metric-label">WoS Indexed</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{scopus_papers:,}</div>
+                        <div class="metric-label">Scopus Indexed</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{both_papers:,}</div>
+                        <div class="metric-label">Both Databases</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{neither_papers:,}</div>
+                        <div class="metric-label">Not Indexed</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{validation.get('validated', 0):,}</div>
+                        <div class="metric-label">Validated DOIs</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ============================================================ -->
+        <!-- SECTION 2: PUBLICATIONS -->
+        <!-- ============================================================ -->
+        <div id="publications" class="section">
+            <div class="section-header" onclick="toggleSection('publications_content')">
+                <div class="section-title">
+                    <span class="icon">📄</span> Publications by Year
+                    <span class="section-badge">{len(yearly_papers)} Years</span>
+                </div>
+                <span class="toggle-indicator" id="publications_indicator">▼</span>
+            </div>
+            <div class="section-divider"></div>
+            <div id="publications_content" class="section-content">
+                <div class="scrollable-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th class="sortable" onclick="sortTable(this)">Year</th>
+                                <th class="sortable" onclick="sortTable(this)">Publications</th>
+                                <th class="sortable" onclick="sortTable(this)">Citations</th>
+                                <th class="sortable" onclick="sortTable(this)">WoS Indexed</th>
+                                <th class="sortable" onclick="sortTable(this)">Scopus Indexed</th>
+                                <th class="sortable" onclick="sortTable(this)">Both</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {''.join([
+                                f'''
+                                <tr>
+                                    <td><strong>{year}</strong></td>
+                                    <td>{yearly_papers.get(year, 0)}</td>
+                                    <td>{yearly_citations.get(year, 0):,}</td>
+                                    <td>{data['yearly_papers_wos'].get(year, 0)}</td>
+                                    <td>{data['yearly_papers_scopus'].get(year, 0)}</td>
+                                    <td>{data['yearly_papers_both'].get(year, 0)}</td>
+                                </tr>
+                                '''
+                                for year in sorted(yearly_papers.keys())
+                            ])}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ============================================================ -->
+        <!-- SECTION 3: AUTHORS -->
+        <!-- ============================================================ -->
+        <div id="authors" class="section">
+            <div class="section-header" onclick="toggleSection('authors_content')">
+                <div class="section-title">
+                    <span class="icon">👥</span> Authors
+                    <span class="section-badge">{len(top_authors)} Authors</span>
+                </div>
+                <span class="toggle-indicator" id="authors_indicator">▼</span>
+            </div>
+            <div class="section-divider"></div>
+            <div id="authors_content" class="section-content">
+                <div class="scrollable-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th class="sortable" onclick="sortTable(this)">Rank</th>
+                                <th class="sortable" onclick="sortTable(this)">Author</th>
+                                <th class="sortable" onclick="sortTable(this)">Publications</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {''.join([
+                                f'''
+                                <tr>
+                                    <td>{i+1}</td>
+                                    <td>{html.escape(author[0])}</td>
+                                    <td>{author[1]}</td>
+                                </tr>
+                                '''
+                                for i, author in enumerate(top_authors)
+                            ])}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ============================================================ -->
+        <!-- SECTION 4: JOURNALS -->
+        <!-- ============================================================ -->
+        <div id="journals" class="section">
+            <div class="section-header" onclick="toggleSection('journals_content')">
+                <div class="section-title">
+                    <span class="icon">📚</span> Journals
+                    <span class="section-badge">{len(top_journals)} Journals</span>
+                </div>
+                <span class="toggle-indicator" id="journals_indicator">▼</span>
+            </div>
+            <div class="section-divider"></div>
+            <div id="journals_content" class="section-content">
+                <div class="scrollable-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th class="sortable" onclick="sortTable(this)">Rank</th>
+                                <th class="sortable" onclick="sortTable(this)">Journal</th>
+                                <th class="sortable" onclick="sortTable(this)">Publications</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {''.join([
+                                f'''
+                                <tr>
+                                    <td>{i+1}</td>
+                                    <td>{html.escape(journal[0])}</td>
+                                    <td>{journal[1]}</td>
+                                </tr>
+                                '''
+                                for i, journal in enumerate(top_journals)
+                            ])}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ============================================================ -->
+        <!-- SECTION 5: PUBLISHERS -->
+        <!-- ============================================================ -->
+        <div id="publishers" class="section">
+            <div class="section-header" onclick="toggleSection('publishers_content')">
+                <div class="section-title">
+                    <span class="icon">🏢</span> Publishers
+                    <span class="section-badge">{len(top_publishers)} Publishers</span>
+                </div>
+                <span class="toggle-indicator" id="publishers_indicator">▼</span>
+            </div>
+            <div class="section-divider"></div>
+            <div id="publishers_content" class="section-content">
+                <div class="scrollable-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th class="sortable" onclick="sortTable(this)">Rank</th>
+                                <th class="sortable" onclick="sortTable(this)">Publisher</th>
+                                <th class="sortable" onclick="sortTable(this)">Publications</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {''.join([
+                                f'''
+                                <tr>
+                                    <td>{i+1}</td>
+                                    <td>{html.escape(publisher[0])}</td>
+                                    <td>{publisher[1]}</td>
+                                </tr>
+                                '''
+                                for i, publisher in enumerate(top_publishers)
+                            ])}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ============================================================ -->
+        <!-- SECTION 6: CITATIONS -->
+        <!-- ============================================================ -->
+        <div id="citations" class="section">
+            <div class="section-header" onclick="toggleSection('citations_content')">
+                <div class="section-title">
+                    <span class="icon">📈</span> Citation Analysis
+                    <span class="section-badge">{total_citations:,} Citations</span>
+                </div>
+                <span class="toggle-indicator" id="citations_indicator">▼</span>
+            </div>
+            <div class="section-divider"></div>
+            <div id="citations_content" class="section-content">
+                <h3 style="color: {primary}; font-size: 16px;">Citation Distribution</h3>
+                <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));">
+                    {''.join([
+                        f'''
+                        <div class="metric-card">
+                            <div class="metric-value">{count}</div>
+                            <div class="metric-label">{range_label}</div>
+                        </div>
+                        '''
+                        for range_label, count in citation_distribution.items()
+                    ])}
+                </div>
+                
+                <h3 style="color: {primary}; font-size: 16px; margin-top: 20px;">Top 20 Most Cited Papers</h3>
+                <div class="scrollable-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th class="sortable" onclick="sortTable(this)">Rank</th>
+                                <th class="sortable" onclick="sortTable(this)">Title</th>
+                                <th class="sortable" onclick="sortTable(this)">Year</th>
+                                <th class="sortable" onclick="sortTable(this)">Citations</th>
+                                <th class="sortable" onclick="sortTable(this)">Citations/Year</th>
+                                <th>Authors</th>
+                                <th>DOI</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {''.join([
+                                f'''
+                                <tr>
+                                    <td>{i+1}</td>
+                                    <td class="word-wrap">{html.escape(paper.get('title', 'No title')[:120])}{'...' if len(paper.get('title', '')) > 120 else ''}</td>
+                                    <td>{paper.get('publication_year', 'N/A')}</td>
+                                    <td>{paper.get('cited_by_count', 0):,}</td>
+                                    <td>{paper.get('citations_per_year', 0):.2f}</td>
+                                    <td>{', '.join([html.escape(a) for a in paper.get('authors', [])[:3]])}{' +' + str(len(paper.get('authors', []))-3) if len(paper.get('authors', [])) > 3 else ''}</td>
+                                    <td><a href="https://doi.org/{html.escape(paper.get('doi', ''))}" target="_blank" class="doi-link">{html.escape(paper.get('doi', 'N/A')[:30])}...</a></td>
+                                </tr>
+                                '''
+                                for i, paper in enumerate(top_cited)
+                            ])}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <h3 style="color: {primary}; font-size: 16px; margin-top: 20px;">Top 20 Papers by Annual Citation Rate</h3>
+                <div class="scrollable-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th class="sortable" onclick="sortTable(this)">Rank</th>
+                                <th class="sortable" onclick="sortTable(this)">Title</th>
+                                <th class="sortable" onclick="sortTable(this)">Year</th>
+                                <th class="sortable" onclick="sortTable(this)">Citations</th>
+                                <th class="sortable" onclick="sortTable(this)">Citations/Year</th>
+                                <th>Authors</th>
+                                <th>DOI</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {''.join([
+                                f'''
+                                <tr>
+                                    <td>{i+1}</td>
+                                    <td class="word-wrap">{html.escape(paper.get('title', 'No title')[:120])}{'...' if len(paper.get('title', '')) > 120 else ''}</td>
+                                    <td>{paper.get('publication_year', 'N/A')}</td>
+                                    <td>{paper.get('cited_by_count', 0):,}</td>
+                                    <td>{paper.get('citations_per_year', 0):.2f}</td>
+                                    <td>{', '.join([html.escape(a) for a in paper.get('authors', [])[:3]])}{' +' + str(len(paper.get('authors', []))-3) if len(paper.get('authors', [])) > 3 else ''}</td>
+                                    <td><a href="https://doi.org/{html.escape(paper.get('doi', ''))}" target="_blank" class="doi-link">{html.escape(paper.get('doi', 'N/A')[:30])}...</a></td>
+                                </tr>
+                                '''
+                                for i, paper in enumerate(top_citations_per_year)
+                            ])}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ============================================================ -->
+        <!-- SECTION 7: COLLABORATIONS -->
+        <!-- ============================================================ -->
+        <div id="collaborations" class="section">
+            <div class="section-header" onclick="toggleSection('collaborations_content')">
+                <div class="section-title">
+                    <span class="icon">🌍</span> Collaborations
+                    <span class="section-badge">{sum(collaboration_types.values())} Papers</span>
+                </div>
+                <span class="toggle-indicator" id="collaborations_indicator">▼</span>
+            </div>
+            <div class="section-divider"></div>
+            <div id="collaborations_content" class="section-content">
+                <div class="geo-grid">
+                    <div class="geo-card">
+                        <h4>Collaboration Types</h4>
+                        {''.join([
+                            f'''
+                            <div style="margin: 4px 0;">
+                                <div class="progress-bar-label">
+                                    <span>{html.escape(collab_type)}</span>
+                                    <span class="label-value">{count} ({count/sum(collaboration_types.values())*100:.1f}%)</span>
+                                </div>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar-fill animate" style="width: {count/sum(collaboration_types.values())*100:.1f}%; background: linear-gradient(90deg, {primary}, {secondary});">
+                                        {count/sum(collaboration_types.values())*100:.1f}%
+                                    </div>
+                                </div>
+                            </div>
+                            '''
+                            for collab_type, count in collaboration_types.items()
+                        ])}
+                    </div>
+                    <div class="geo-card">
+                        <h4>Collaboration by Year</h4>
+                        {''.join([
+                            f'''
+                            <div style="margin: 2px 0; font-size: 12px;">
+                                <strong>{year}:</strong> 
+                                Intra: {yearly_collab.get(year, {}).get('Intra-institutional', 0)} | 
+                                Inter: {yearly_collab.get(year, {}).get('Inter-institutional (domestic)', 0)} | 
+                                Intl: {yearly_collab.get(year, {}).get('International', 0)}
+                            </div>
+                            '''
+                            for year in sorted(yearly_collab.keys())
+                        ])}
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ============================================================ -->
+        <!-- SECTION 8: INDEXING -->
+        <!-- ============================================================ -->
+        <div id="indexing" class="section">
+            <div class="section-header" onclick="toggleSection('indexing_content')">
+                <div class="section-title">
+                    <span class="icon">🔬</span> WoS / Scopus Indexing
+                    <span class="section-badge">{wos_papers + scopus_papers - both_papers} Indexed</span>
+                </div>
+                <span class="toggle-indicator" id="indexing_indicator">▼</span>
+            </div>
+            <div class="section-divider"></div>
+            <div id="indexing_content" class="section-content">
+                <div class="metrics-grid" style="grid-template-columns: repeat(4, 1fr);">
+                    <div class="metric-card">
+                        <div class="metric-value">{wos_papers:,}</div>
+                        <div class="metric-label">WoS Indexed</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{scopus_papers:,}</div>
+                        <div class="metric-label">Scopus Indexed</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{both_papers:,}</div>
+                        <div class="metric-label">Both Databases</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">{neither_papers:,}</div>
+                        <div class="metric-label">Not Indexed</div>
+                    </div>
+                </div>
+                
+                <h3 style="color: {primary}; font-size: 16px; margin-top: 20px;">Indexing Status per Paper</h3>
+                <div class="scrollable-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th class="sortable" onclick="sortTable(this)">Title</th>
+                                <th class="sortable" onclick="sortTable(this)">Year</th>
+                                <th class="sortable" onclick="sortTable(this)">WoS</th>
+                                <th class="sortable" onclick="sortTable(this)">WoS IF</th>
+                                <th class="sortable" onclick="sortTable(this)">WoS Quartile</th>
+                                <th class="sortable" onclick="sortTable(this)">Scopus</th>
+                                <th class="sortable" onclick="sortTable(this)">Scopus CiteScore</th>
+                                <th class="sortable" onclick="sortTable(this)">Scopus Quartile</th>
+                                <th>DOI</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {''.join([
+                                f'''
+                                <tr>
+                                    <td class="word-wrap">{html.escape(paper.get('title', 'No title')[:100])}{'...' if len(paper.get('title', '')) > 100 else ''}</td>
+                                    <td>{paper.get('publication_year', 'N/A')}</td>
+                                    <td>{'✅' if paper.get('wos_indexed') else '❌'}</td>
+                                    <td>{paper.get('wos_if', '-')}</td>
+                                    <td>{html.escape(paper.get('wos_quartile', '-'))}</td>
+                                    <td>{'✅' if paper.get('scopus_indexed') else '❌'}</td>
+                                    <td>{paper.get('scopus_citescore', '-')}</td>
+                                    <td>{html.escape(paper.get('scopus_quartile', '-'))}</td>
+                                    <td><a href="https://doi.org/{html.escape(paper.get('doi', ''))}" target="_blank" class="doi-link">{html.escape(paper.get('doi', 'N/A')[:20])}...</a></td>
+                                </tr>
+                                '''
+                                for paper in enriched_papers
+                            ])}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ============================================================ -->
+        <!-- SECTION 9: ALL PUBLICATIONS -->
+        <!-- ============================================================ -->
+        <div id="all_publications" class="section">
+            <div class="section-header" onclick="toggleSection('all_content')">
+                <div class="section-title">
+                    <span class="icon">📚</span> All Publications
+                    <span class="section-badge">{len(enriched_papers)} Articles</span>
+                </div>
+                <span class="toggle-indicator" id="all_indicator">▼</span>
+            </div>
+            <div class="section-divider"></div>
+            <div id="all_content" class="section-content">
+                <div class="filter-section">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label>🔍</label>
+                            <input type="text" id="titleFilter" placeholder="Filter by title..." onkeyup="filterPublications()">
+                        </div>
+                        <div class="filter-group">
+                            <label>📅</label>
+                            <select id="yearFilter" onchange="filterPublications()">
+                                <option value="">All Years</option>
+                                {''.join([
+                                    f'<option value="{year}">{year}</option>'
+                                    for year in sorted(set([p.get('publication_year') for p in enriched_papers if p.get('publication_year')]), reverse=True)
+                                ])}
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>👤</label>
+                            <input type="text" id="authorFilter" placeholder="Filter by author..." onkeyup="filterPublications()">
+                        </div>
+                        <div class="filter-group">
+                            <label>📊</label>
+                            <input type="number" id="citationFilter" placeholder="Min citations..." min="0" onchange="filterPublications()">
+                        </div>
+                    </div>
+                    <div class="filter-stats">
+                        <span id="visibleCount">Showing {len(enriched_papers)} of {len(enriched_papers)} publications</span>
+                    </div>
+                </div>
+                
+                <div class="scrollable-table" style="max-height: 600px;">
+                    <table id="publicationsTable">
+                        <thead>
+                            <tr>
+                                <th class="sortable" onclick="sortTable(this)">#</th>
+                                <th class="sortable" onclick="sortTable(this)">Title</th>
+                                <th class="sortable" onclick="sortTable(this)">Year</th>
+                                <th class="sortable" onclick="sortTable(this)">Authors</th>
+                                <th class="sortable" onclick="sortTable(this)">Journal</th>
+                                <th class="sortable" onclick="sortTable(this)">Citations</th>
+                                <th class="sortable" onclick="sortTable(this)">WoS</th>
+                                <th class="sortable" onclick="sortTable(this)">Scopus</th>
+                                <th>DOI</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {''.join([
+                                f'''
+                                <tr 
+                                    data-year="{p.get('publication_year', '')}" 
+                                    data-authors="{','.join([html.escape(a) for a in p.get('authors', [])])}" 
+                                    data-citations="{p.get('cited_by_count', 0)}" 
+                                    data-title="{html.escape((p.get('title') or '').lower())}"
+                                    data-doi="{html.escape((p.get('doi') or '').lower())}"
+                                >
+                                    <td>{i+1}</td>
+                                    <td class="word-wrap">{html.escape((p.get('title') or 'No title')[:120])}{'...' if len(p.get('title') or '') > 120 else ''}</td>
+                                    <td>{p.get('publication_year', 'N/A')}</td>
+                                    <td>{', '.join([html.escape(a) for a in p.get('authors', [])[:3]])}{' +' + str(len(p.get('authors', []))-3) if len(p.get('authors', [])) > 3 else ''}</td>
+                                    <td>{html.escape(p.get('journal', 'Unknown')[:40])}{'...' if len(p.get('journal', '')) > 40 else ''}</td>
+                                    <td>{p.get('cited_by_count', 0)}</td>
+                                    <td>{'✅' if p.get('wos_indexed') else ''}</td>
+                                    <td>{'✅' if p.get('scopus_indexed') else ''}</td>
+                                    <td><a href="https://doi.org/{html.escape(p.get('doi', ''))}" target="_blank" class="doi-link">{html.escape((p.get('doi') or 'N/A')[:20])}...</a></td>
+                                </tr>
+                                '''
+                                for i, p in enumerate(enriched_papers)
+                            ])}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ============================================================ -->
+        <!-- FOOTER -->
+        <!-- ============================================================ -->
+        <div class="footer">
+            <p>Institution Analysis Report - {html.escape(institution_name)}</p>
+            <p>Generated: {datetime.now().strftime('%d.%m.%Y %H:%M')}</p>
+            <p>ROR: {html.escape(institution_ror)} | Analysis Period: {min_year} - {max_year}</p>
+            <p>Total Publications: {total_papers:,} | Total Citations: {total_citations:,}</p>
+        </div>
+        
+    </div>
+</div>
+
+<script>
+    // ===== TOGGLE SECTIONS =====
+    function toggleSection(sectionId) {
+        var content = document.getElementById(sectionId);
+        var indicator = document.getElementById(sectionId.replace('_content', '_indicator'));
+        if (content) {
+            if (content.style.display === 'none' || content.style.display === '') {
+                content.style.display = 'block';
+                if (indicator) indicator.textContent = '▼';
+                content.style.animation = 'fadeInUp 0.4s ease forwards';
+            } else {
+                content.style.display = 'none';
+                if (indicator) indicator.textContent = '▶';
+            }
+        }
+    }
+    
+    // ===== FILTER PUBLICATIONS =====
+    function filterPublications() {
+        var titleFilter = document.getElementById('titleFilter').value.toLowerCase();
+        var yearFilter = document.getElementById('yearFilter').value;
+        var authorFilter = document.getElementById('authorFilter').value.toLowerCase();
+        var citationFilter = parseInt(document.getElementById('citationFilter').value) || 0;
+        
+        var rows = document.querySelectorAll('#publicationsTable tbody tr');
+        var visible = 0;
+        
+        rows.forEach(function(row) {
+            var title = row.getAttribute('data-title') || '';
+            var year = row.getAttribute('data-year') || '';
+            var authors = row.getAttribute('data-authors') || '';
+            var citations = parseInt(row.getAttribute('data-citations')) || 0;
+            
+            var show = true;
+            
+            if (titleFilter && !title.includes(titleFilter)) show = false;
+            if (yearFilter && year !== yearFilter) show = false;
+            if (authorFilter && !authors.toLowerCase().includes(authorFilter)) show = false;
+            if (citationFilter > 0 && citations < citationFilter) show = false;
+            
+            row.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+        
+        document.getElementById('visibleCount').textContent = 
+            'Showing ' + visible + ' of ' + rows.length + ' publications';
+    }
+    
+    // ===== UNIVERSAL SORT FUNCTION =====
+    function sortTable(header) {
+        var table = header.closest('table');
+        if (!table) return;
+        var tbody = table.querySelector('tbody');
+        if (!tbody) return;
+        var rows = Array.from(tbody.querySelectorAll('tr'));
+        var colIndex = Array.from(header.parentElement.children).indexOf(header);
+        
+        // Determine sort direction
+        var key = table.id + '_col_' + colIndex;
+        if (!window.sortState) window.sortState = {};
+        if (!window.sortState[key]) window.sortState[key] = 1;
+        else window.sortState[key] *= -1;
+        var direction = window.sortState[key];
+        
+        // Update header indicators
+        var headers = table.querySelectorAll('thead th');
+        headers.forEach(function(th, idx) {
+            th.classList.remove('asc', 'desc');
+            if (idx === colIndex) {
+                th.classList.add(direction > 0 ? 'asc' : 'desc');
+            }
+        });
+        
+        rows.sort(function(a, b) {
+            var valA = a.cells[colIndex] ? a.cells[colIndex].textContent.trim() : '';
+            var valB = b.cells[colIndex] ? b.cells[colIndex].textContent.trim() : '';
+            
+            // Try parsing as number
+            var numA = parseFloat(valA.replace(/,/g, ''));
+            var numB = parseFloat(valB.replace(/,/g, ''));
+            if (!isNaN(numA) && !isNaN(numB)) {
+                return (numA - numB) * direction;
+            }
+            
+            // String comparison
+            return valA.localeCompare(valB) * direction;
+        });
+        
+        // Re-append rows
+        rows.forEach(function(row) {
+            tbody.appendChild(row);
+        });
+    }
+    
+    // ===== AUTO-OPEN FIRST SECTION =====
+    document.addEventListener('DOMContentLoaded', function() {
+        var sections = ['publications_content', 'authors_content', 'journals_content', 
+                       'publishers_content', 'citations_content', 'collaborations_content', 
+                       'indexing_content', 'all_content'];
+        sections.forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) {
+                el.style.display = 'none';
+            }
+        });
+        var indicators = ['publications_indicator', 'authors_indicator', 'journals_indicator',
+                         'publishers_indicator', 'citations_indicator', 'collaborations_indicator',
+                         'indexing_indicator', 'all_indicator'];
+        indicators.forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) {
+                el.textContent = '▶';
+            }
+        });
+    });
+</script>
+
+</body>
+</html>
+"""
+    
+    return html_content
+
+# ============================================================================
 # MAIN APP
 # ============================================================================
 
@@ -3178,14 +4509,12 @@ def main():
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("### 📥 Export Data")
         
-        col1, col2, col3 = st.columns(3)
-
         export_df = pd.DataFrame([
             {
                 'DOI': p['doi'],
-                'Online Date': p.get('online_date', ''),  # Переименовано для ясности
-                'Print Date': p.get('print_date', ''),    # Переименовано для ясности
-                'Publication Year (used for filtering)': p.get('publication_year', ''),  # Год из print_date
+                'Online Date': p.get('online_date', ''),
+                'Print Date': p.get('print_date', ''),
+                'Publication Year (used for filtering)': p.get('publication_year', ''),
                 'Authors': '; '.join(p['authors']),
                 'Title': p['title'],
                 'Journal': p['journal'],
@@ -3208,17 +4537,9 @@ def main():
             for p in data['enriched_papers']
         ])
         
-        with col1:
-            csv = export_df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📊 Download CSV",
-                data=csv,
-                file_name=f"uninst_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
+        col1, col2 = st.columns(2)
         
-        with col2:
+        with col1:
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 export_df.to_excel(writer, sheet_name='All Papers', index=False)
@@ -3259,53 +4580,33 @@ def main():
                 use_container_width=True
             )
         
-        with col3:
-            json_data = json.dumps({
-                'institution': {
-                    'name': st.session_state['institution_name'],
-                    'ror': st.session_state['institution_ror'],
-                    'country': st.session_state['institution_country']
-                },
-                'years': st.session_state['years_range'],
-                'analysis_date': datetime.now().isoformat(),
-                'summary': {
-                    'total_papers': data['total_papers'],
-                    'total_citations': data['total_citations'],
-                    'wos_papers': data['wos_papers'],
-                    'scopus_papers': data['scopus_papers'],
-                    'both_papers': data['both_papers'],
-                    'validation_stats': validation,
-                    'collaboration_types': data['collaboration_types']
-                },
-                'papers': [
-                    {
-                        'title': p['title'],
-                        'authors': p['authors'],
-                        'year': p['publication_year'],
-                        'citations': p['cited_by_count'],
-                        'references': p.get('references_count', 0),
-                        'doi': p['doi'],
-                        'wos_indexed': p.get('wos_indexed', False),
-                        'scopus_indexed': p.get('scopus_indexed', False)
-                    }
-                    for p in data['enriched_papers'][:100]
-                ]
-            }, indent=2, ensure_ascii=False).encode('utf-8')
+        with col2:
+            # Generate HTML Report
+            html_report = generate_institution_html_report(
+                data=data,
+                validation=validation,
+                institution_name=st.session_state['institution_name'],
+                institution_ror=st.session_state['institution_ror'],
+                institution_country=st.session_state['institution_country'],
+                years_range=st.session_state['years_range'],
+                colors=colors
+            )
             
             st.download_button(
-                label="📋 Download JSON",
-                data=json_data,
-                file_name=f"uninst_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json",
-                use_container_width=True
+                label="📄 Generate HTML Report",
+                data=html_report.encode('utf-8'),
+                file_name=f"institution_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+                mime="text/html",
+                use_container_width=True,
+                help="Download comprehensive HTML report with all data and visualizations"
             )
+            
+            # Show preview option
+            if st.button("👁️ Preview HTML Report", use_container_width=True):
+                st.markdown("### HTML Report Preview")
+                st.components.v1.html(html_report, height=800, scrolling=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
