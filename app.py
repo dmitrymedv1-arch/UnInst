@@ -2490,6 +2490,9 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
     both_papers = data['both_papers']
     yearly_papers = data['yearly_papers']
     yearly_citations = data['yearly_citations']
+    yearly_papers_wos = data.get('yearly_papers_wos', {})
+    yearly_papers_scopus = data.get('yearly_papers_scopus', {})
+    yearly_papers_both = data.get('yearly_papers_both', {})
     top_authors = data['top_authors']
     top_journals = data['top_journals']
     top_publishers = data['top_publishers']
@@ -2497,7 +2500,8 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
     top_cited = data['top_cited']
     top_citations_per_year = data['top_citations_per_year']
     collaboration_types = data['collaboration_types']
-    yearly_collaboration = data['yearly_collaboration']
+    yearly_collaboration = data.get('yearly_collaboration', {})
+    yearly_collab = yearly_collaboration  # Add this line
     enriched_papers = data['enriched_papers']
     
     # Calculate additional metrics
