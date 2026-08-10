@@ -3556,10 +3556,10 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
                                     <td>{paper.get('publication_year', 'N/A')}</td>
                                     <td>{'✅' if paper.get('wos_indexed') else '❌'}</td>
                                     <td>{paper.get('wos_if', '-')}</td>
-                                    <td>{html.escape(paper.get('wos_quartile', '-'))}</td>
+                                    <td>{html.escape(str(paper.get('wos_quartile', '-'))) if paper.get('wos_quartile') is not None else '-'}</td>
                                     <td>{'✅' if paper.get('scopus_indexed') else '❌'}</td>
                                     <td>{paper.get('scopus_citescore', '-')}</td>
-                                    <td>{html.escape(paper.get('scopus_quartile', '-'))}</td>
+                                    <td>{html.escape(str(paper.get('scopus_quartile', '-'))) if paper.get('scopus_quartile') is not None else '-'}</td>
                                     <td><a href="https://doi.org/{html.escape(paper.get('doi', ''))}" target="_blank" class="doi-link">{html.escape(paper.get('doi', 'N/A')[:20])}...</a></td>
                                 </tr>
                                 '''
