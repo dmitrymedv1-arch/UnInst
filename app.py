@@ -3685,7 +3685,7 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
     }}
     
     // ===== FILTER PUBLICATIONS =====
-    function filterPublications() {
+    function filterPublications() {{
         var titleFilter = document.getElementById('titleFilter').value.toLowerCase();
         var yearFilter = document.getElementById('yearFilter').value;
         var authorFilter = document.getElementById('authorFilter').value.toLowerCase();
@@ -3694,7 +3694,7 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
         var rows = document.querySelectorAll('#publicationsTable tbody tr');
         var visible = 0;
         
-        rows.forEach(function(row) {
+        rows.forEach(function(row) {{
             var title = row.getAttribute('data-title') || '';
             var year = row.getAttribute('data-year') || '';
             var authors = row.getAttribute('data-authors') || '';
@@ -3709,14 +3709,14 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
             
             row.style.display = show ? '' : 'none';
             if (show) visible++;
-        });
+        }});
         
         document.getElementById('visibleCount').textContent = 
             'Showing ' + visible + ' of ' + rows.length + ' publications';
-    }
+    }}
     
     // ===== UNIVERSAL SORT FUNCTION =====
-    function sortTable(header) {
+    function sortTable(header) {{
         var table = header.closest('table');
         if (!table) return;
         var tbody = table.querySelector('tbody');
@@ -3724,64 +3724,58 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
         var rows = Array.from(tbody.querySelectorAll('tr'));
         var colIndex = Array.from(header.parentElement.children).indexOf(header);
         
-        // Determine sort direction
         var key = table.id + '_col_' + colIndex;
-        if (!window.sortState) window.sortState = {};
+        if (!window.sortState) window.sortState = {{}};
         if (!window.sortState[key]) window.sortState[key] = 1;
         else window.sortState[key] *= -1;
         var direction = window.sortState[key];
         
-        // Update header indicators
         var headers = table.querySelectorAll('thead th');
-        headers.forEach(function(th, idx) {
+        headers.forEach(function(th, idx) {{
             th.classList.remove('asc', 'desc');
-            if (idx === colIndex) {
+            if (idx === colIndex) {{
                 th.classList.add(direction > 0 ? 'asc' : 'desc');
-            }
-        });
+            }}
+        }});
         
-        rows.sort(function(a, b) {
+        rows.sort(function(a, b) {{
             var valA = a.cells[colIndex] ? a.cells[colIndex].textContent.trim() : '';
             var valB = b.cells[colIndex] ? b.cells[colIndex].textContent.trim() : '';
             
-            // Try parsing as number
             var numA = parseFloat(valA.replace(/,/g, ''));
             var numB = parseFloat(valB.replace(/,/g, ''));
-            if (!isNaN(numA) && !isNaN(numB)) {
+            if (!isNaN(numA) && !isNaN(numB)) {{
                 return (numA - numB) * direction;
-            }
+            }}
             
-            // String comparison
             return valA.localeCompare(valB) * direction;
-        });
+        }});
         
-        // Re-append rows
-        rows.forEach(function(row) {
+        rows.forEach(function(row) {{
             tbody.appendChild(row);
-        });
-    }
+        }});
+    }}
     
-    // ===== AUTO-OPEN FIRST SECTION =====
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function() {{
         var sections = ['publications_content', 'authors_content', 'journals_content', 
                        'publishers_content', 'citations_content', 'collaborations_content', 
                        'indexing_content', 'all_content'];
-        sections.forEach(function(id) {
+        sections.forEach(function(id) {{
             var el = document.getElementById(id);
-            if (el) {
+            if (el) {{
                 el.style.display = 'none';
-            }
-        });
+            }}
+        }});
         var indicators = ['publications_indicator', 'authors_indicator', 'journals_indicator',
                          'publishers_indicator', 'citations_indicator', 'collaborations_indicator',
                          'indexing_indicator', 'all_indicator'];
-        indicators.forEach(function(id) {
+        indicators.forEach(function(id) {{
             var el = document.getElementById(id);
-            if (el) {
+            if (el) {{
                 el.textContent = '▶';
-            }
-        });
-    });
+            }}
+        }});
+    }});
 </script>
 
 </body>
