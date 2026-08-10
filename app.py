@@ -1713,13 +1713,13 @@ def analyze_papers(papers: List[Dict], crossref_data: Optional[Dict] = None) -> 
         all_authors.extend(p.get('authors', []))
     
     author_counts = Counter(all_authors)
-    top_authors = author_counts.most_common(20)
+    top_authors = author_counts.most_common()
     
     journal_counts = Counter(p.get('journal', 'Unknown') for p in enriched_papers)
-    top_journals = journal_counts.most_common(20)
+    top_journals = journal_counts.most_common()
     
     publisher_counts = Counter(p.get('publisher', 'Unknown') for p in enriched_papers if p.get('publisher'))
-    top_publishers = publisher_counts.most_common(20)
+    top_publishers = publisher_counts.most_common()
     
     citations = [p['cited_by_count'] for p in enriched_papers]
     citation_ranges = {
