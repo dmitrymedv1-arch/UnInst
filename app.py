@@ -2480,9 +2480,9 @@ def get_color_for_heatmap(value: float, max_value: float) -> str:
 def generate_institution_html_report(data: Dict, validation: Dict, institution_name: str, 
                                       institution_ror: str, institution_country: str, 
                                       years_range: List[int], colors: Dict) -> str:
-    """Generate comprehensive HTML report for institution analysis"""
+    """Generate comprehensive HTML report for institution analysis - NO DATA TRUNCATION"""
     
-    # Extract data
+    # Extract data - ALL data, no truncation
     total_papers = data['total_papers']
     total_citations = data['total_citations']
     wos_papers = data['wos_papers']
@@ -2493,16 +2493,16 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
     yearly_papers_wos = data.get('yearly_papers_wos', {})
     yearly_papers_scopus = data.get('yearly_papers_scopus', {})
     yearly_papers_both = data.get('yearly_papers_both', {})
-    top_authors = data['top_authors']
-    top_journals = data['top_journals']
-    top_publishers = data['top_publishers']
+    top_authors = data['top_authors']  # ALL authors
+    top_journals = data['top_journals']  # ALL journals
+    top_publishers = data['top_publishers']  # ALL publishers
     citation_distribution = data['citation_distribution']
-    top_cited = data['top_cited']
-    top_citations_per_year = data['top_citations_per_year']
+    top_cited = data['top_cited']  # Top 20 most cited
+    top_citations_per_year = data['top_citations_per_year']  # Top 20 by citations per year
     collaboration_types = data['collaboration_types']
     yearly_collaboration = data.get('yearly_collaboration', {})
-    yearly_collab = yearly_collaboration  # Add this line
-    enriched_papers = data['enriched_papers']
+    yearly_collab = yearly_collaboration
+    enriched_papers = data['enriched_papers']  # ALL papers
     
     # Calculate additional metrics
     avg_citations = total_citations / total_papers if total_papers > 0 else 0
@@ -2516,7 +2516,7 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
     # Calculate active years
     active_years = len(years)
     
-    # Count unique authors, affiliations, countries
+    # Count unique authors, affiliations, countries - ALL data
     all_authors = set()
     all_affiliations = set()
     all_countries = set()
@@ -2530,9 +2530,9 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
     unique_affiliations = len(all_affiliations)
     unique_countries = len(all_countries)
     
-    # Calculate citations per year for top papers
+    # Calculate citations per year for all papers
     current_year = datetime.now().year
-    for p in top_cited:
+    for p in enriched_papers:
         if 'citations_per_year' not in p:
             p['citations_per_year'] = calculate_citations_per_year(
                 p.get('cited_by_count', 0), 
@@ -2881,7 +2881,7 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
             background-color: #f8f9fa;
         }}
         .scrollable-table {{
-            max-height: 500px;
+            max-height: 600px;
             overflow-y: auto;
             border-radius: 8px;
             border: 1px solid #e9ecef;
@@ -3091,17 +3091,17 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
 </head>
 <body>
     <div class="sidebar">
-        <h3>{html.escape(institution_name[:40])}{'...' if len(institution_name) > 40 else ''}</h3>
+        <h3>{html.escape(institution_name[:60])}{'...' if len(institution_name) > 60 else ''}</h3>
         <div class="nav-section">
             <a href="#overview"><span class="nav-icon">📋</span> Overview</a>
-            <a href="#publications"><span class="nav-icon">📄</span> Publications</a>
-            <a href="#authors"><span class="nav-icon">👥</span> Authors</a>
-            <a href="#journals"><span class="nav-icon">📚</span> Journals</a>
-            <a href="#publishers"><span class="nav-icon">🏢</span> Publishers</a>
-            <a href="#citations"><span class="nav-icon">📈</span> Citations</a>
+            <a href="#publications"><span class="nav-icon">📄</span> Publications by Year</a>
+            <a href="#authors"><span class="nav-icon">👥</span> All Authors ({len(top_authors)})</a>
+            <a href="#journals"><span class="nav-icon">📚</span> All Journals ({len(top_journals)})</a>
+            <a href="#publishers"><span class="nav-icon">🏢</span> All Publishers ({len(top_publishers)})</a>
+            <a href="#citations"><span class="nav-icon">📈</span> Citation Analysis</a>
             <a href="#collaborations"><span class="nav-icon">🌍</span> Collaborations</a>
-            <a href="#indexing"><span class="nav-icon">🔬</span> Indexing</a>
-            <a href="#all_publications"><span class="nav-icon">📚</span> All Publications</a>
+            <a href="#indexing"><span class="nav-icon">🔬</span> Indexing Status</a>
+            <a href="#all_publications"><span class="nav-icon">📚</span> All Publications ({len(enriched_papers)})</a>
         </div>
         <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 11px; opacity: 0.8; line-height: 1.6;">
             <div>ROR: {html.escape(institution_ror)}</div>
@@ -3194,7 +3194,7 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
         </div>
         
         <!-- ============================================================ -->
-        <!-- SECTION 2: PUBLICATIONS -->
+        <!-- SECTION 2: PUBLICATIONS BY YEAR -->
         <!-- ============================================================ -->
         <div id="publications" class="section">
             <div class="section-header" onclick="toggleSection('publications_content')">
@@ -3225,9 +3225,9 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
                                     <td><strong>{year}</strong></td>
                                     <td>{yearly_papers.get(year, 0)}</td>
                                     <td>{yearly_citations.get(year, 0):,}</td>
-                                    <td>{data['yearly_papers_wos'].get(year, 0)}</td>
-                                    <td>{data['yearly_papers_scopus'].get(year, 0)}</td>
-                                    <td>{data['yearly_papers_both'].get(year, 0)}</td>
+                                    <td>{yearly_papers_wos.get(year, 0)}</td>
+                                    <td>{yearly_papers_scopus.get(year, 0)}</td>
+                                    <td>{yearly_papers_both.get(year, 0)}</td>
                                 </tr>
                                 '''
                                 for year in sorted(yearly_papers.keys())
@@ -3239,12 +3239,12 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
         </div>
         
         <!-- ============================================================ -->
-        <!-- SECTION 3: AUTHORS -->
+        <!-- SECTION 3: ALL AUTHORS -->
         <!-- ============================================================ -->
         <div id="authors" class="section">
             <div class="section-header" onclick="toggleSection('authors_content')">
                 <div class="section-title">
-                    <span class="icon">👥</span> Authors
+                    <span class="icon">👥</span> All Authors
                     <span class="section-badge">{len(top_authors)} Authors</span>
                 </div>
                 <span class="toggle-indicator" id="authors_indicator">▼</span>
@@ -3265,7 +3265,7 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
                                 f'''
                                 <tr>
                                     <td>{i+1}</td>
-                                    <td>{html.escape(author[0])}</td>
+                                    <td>{html.escape(str(author[0]))}</td>
                                     <td>{author[1]}</td>
                                 </tr>
                                 '''
@@ -3278,12 +3278,12 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
         </div>
         
         <!-- ============================================================ -->
-        <!-- SECTION 4: JOURNALS -->
+        <!-- SECTION 4: ALL JOURNALS -->
         <!-- ============================================================ -->
         <div id="journals" class="section">
             <div class="section-header" onclick="toggleSection('journals_content')">
                 <div class="section-title">
-                    <span class="icon">📚</span> Journals
+                    <span class="icon">📚</span> All Journals
                     <span class="section-badge">{len(top_journals)} Journals</span>
                 </div>
                 <span class="toggle-indicator" id="journals_indicator">▼</span>
@@ -3304,7 +3304,7 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
                                 f'''
                                 <tr>
                                     <td>{i+1}</td>
-                                    <td>{html.escape(journal[0])}</td>
+                                    <td>{html.escape(str(journal[0]))}</td>
                                     <td>{journal[1]}</td>
                                 </tr>
                                 '''
@@ -3317,12 +3317,12 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
         </div>
         
         <!-- ============================================================ -->
-        <!-- SECTION 5: PUBLISHERS -->
+        <!-- SECTION 5: ALL PUBLISHERS -->
         <!-- ============================================================ -->
         <div id="publishers" class="section">
             <div class="section-header" onclick="toggleSection('publishers_content')">
                 <div class="section-title">
-                    <span class="icon">🏢</span> Publishers
+                    <span class="icon">🏢</span> All Publishers
                     <span class="section-badge">{len(top_publishers)} Publishers</span>
                 </div>
                 <span class="toggle-indicator" id="publishers_indicator">▼</span>
@@ -3343,7 +3343,7 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
                                 f'''
                                 <tr>
                                     <td>{i+1}</td>
-                                    <td>{html.escape(publisher[0])}</td>
+                                    <td>{html.escape(str(publisher[0]))}</td>
                                     <td>{publisher[1]}</td>
                                 </tr>
                                 '''
@@ -3356,7 +3356,7 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
         </div>
         
         <!-- ============================================================ -->
-        <!-- SECTION 6: CITATIONS -->
+        <!-- SECTION 6: CITATION ANALYSIS -->
         <!-- ============================================================ -->
         <div id="citations" class="section">
             <div class="section-header" onclick="toggleSection('citations_content')">
@@ -3400,12 +3400,12 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
                                 f'''
                                 <tr>
                                     <td>{i+1}</td>
-                                    <td class="word-wrap">{html.escape(paper.get('title', 'No title')[:120])}{'...' if len(paper.get('title', '')) > 120 else ''}</td>
+                                    <td class="word-wrap">{html.escape(str(paper.get('title', 'No title')))}</td>
                                     <td>{paper.get('publication_year', 'N/A')}</td>
                                     <td>{paper.get('cited_by_count', 0):,}</td>
                                     <td>{paper.get('citations_per_year', 0):.2f}</td>
-                                    <td>{', '.join([html.escape(a) for a in paper.get('authors', [])[:3]])}{' +' + str(len(paper.get('authors', []))-3) if len(paper.get('authors', [])) > 3 else ''}</td>
-                                    <td><a href="https://doi.org/{html.escape(paper.get('doi', ''))}" target="_blank" class="doi-link">{html.escape(paper.get('doi', 'N/A')[:30])}...</a></td>
+                                    <td>{', '.join([html.escape(str(a)) for a in paper.get('authors', [])])}</td>
+                                    <td><a href="https://doi.org/{html.escape(str(paper.get('doi', '')))}" target="_blank" class="doi-link">{html.escape(str(paper.get('doi', 'N/A')))}</a></td>
                                 </tr>
                                 '''
                                 for i, paper in enumerate(top_cited)
@@ -3433,12 +3433,12 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
                                 f'''
                                 <tr>
                                     <td>{i+1}</td>
-                                    <td class="word-wrap">{html.escape(paper.get('title', 'No title')[:120])}{'...' if len(paper.get('title', '')) > 120 else ''}</td>
+                                    <td class="word-wrap">{html.escape(str(paper.get('title', 'No title')))}</td>
                                     <td>{paper.get('publication_year', 'N/A')}</td>
                                     <td>{paper.get('cited_by_count', 0):,}</td>
                                     <td>{paper.get('citations_per_year', 0):.2f}</td>
-                                    <td>{', '.join([html.escape(a) for a in paper.get('authors', [])[:3]])}{' +' + str(len(paper.get('authors', []))-3) if len(paper.get('authors', [])) > 3 else ''}</td>
-                                    <td><a href="https://doi.org/{html.escape(paper.get('doi', ''))}" target="_blank" class="doi-link">{html.escape(paper.get('doi', 'N/A')[:30])}...</a></td>
+                                    <td>{', '.join([html.escape(str(a)) for a in paper.get('authors', [])])}</td>
+                                    <td><a href="https://doi.org/{html.escape(str(paper.get('doi', '')))}" target="_blank" class="doi-link">{html.escape(str(paper.get('doi', 'N/A')))}</a></td>
                                 </tr>
                                 '''
                                 for i, paper in enumerate(top_citations_per_year)
@@ -3469,7 +3469,7 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
                             f'''
                             <div style="margin: 4px 0;">
                                 <div class="progress-bar-label">
-                                    <span>{html.escape(collab_type)}</span>
+                                    <span>{html.escape(str(collab_type))}</span>
                                     <span class="label-value">{count} ({count/sum(collaboration_types.values())*100:.1f}%)</span>
                                 </div>
                                 <div class="progress-bar-container">
@@ -3501,12 +3501,12 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
         </div>
         
         <!-- ============================================================ -->
-        <!-- SECTION 8: INDEXING -->
+        <!-- SECTION 8: INDEXING STATUS -->
         <!-- ============================================================ -->
         <div id="indexing" class="section">
             <div class="section-header" onclick="toggleSection('indexing_content')">
                 <div class="section-title">
-                    <span class="icon">🔬</span> WoS / Scopus Indexing
+                    <span class="icon">🔬</span> Indexing Status
                     <span class="section-badge">{wos_papers + scopus_papers - both_papers} Indexed</span>
                 </div>
                 <span class="toggle-indicator" id="indexing_indicator">▼</span>
@@ -3552,15 +3552,15 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
                             {''.join([
                                 f'''
                                 <tr>
-                                    <td class="word-wrap">{html.escape(paper.get('title', 'No title')[:100])}{'...' if len(paper.get('title', '')) > 100 else ''}</td>
+                                    <td class="word-wrap">{html.escape(str(paper.get('title', 'No title')))}</td>
                                     <td>{paper.get('publication_year', 'N/A')}</td>
                                     <td>{'✅' if paper.get('wos_indexed') else '❌'}</td>
                                     <td>{paper.get('wos_if', '-')}</td>
-                                    <td>{html.escape(str(paper.get('wos_quartile', '-'))) if paper.get('wos_quartile') is not None else '-'}</td>
+                                    <td>{html.escape(str(paper.get('wos_quartile', '-')))}</td>
                                     <td>{'✅' if paper.get('scopus_indexed') else '❌'}</td>
                                     <td>{paper.get('scopus_citescore', '-')}</td>
-                                    <td>{html.escape(str(paper.get('scopus_quartile', '-'))) if paper.get('scopus_quartile') is not None else '-'}</td>
-                                    <td><a href="https://doi.org/{html.escape(paper.get('doi', ''))}" target="_blank" class="doi-link">{html.escape(paper.get('doi', 'N/A')[:20])}...</a></td>
+                                    <td>{html.escape(str(paper.get('scopus_quartile', '-')))}</td>
+                                    <td><a href="https://doi.org/{html.escape(str(paper.get('doi', '')))}" target="_blank" class="doi-link">{html.escape(str(paper.get('doi', 'N/A')))}</a></td>
                                 </tr>
                                 '''
                                 for paper in enriched_papers
@@ -3634,20 +3634,20 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
                                 f'''
                                 <tr 
                                     data-year="{p.get('publication_year', '')}" 
-                                    data-authors="{','.join([html.escape(a) for a in p.get('authors', [])])}" 
+                                    data-authors="{','.join([html.escape(str(a)) for a in p.get('authors', [])])}" 
                                     data-citations="{p.get('cited_by_count', 0)}" 
-                                    data-title="{html.escape((p.get('title') or '').lower())}"
-                                    data-doi="{html.escape((p.get('doi') or '').lower())}"
+                                    data-title="{html.escape(str(p.get('title', '')).lower())}"
+                                    data-doi="{html.escape(str(p.get('doi', '')).lower())}"
                                 >
                                     <td>{i+1}</td>
-                                    <td class="word-wrap">{html.escape((p.get('title') or 'No title')[:120])}{'...' if len(p.get('title') or '') > 120 else ''}</td>
+                                    <td class="word-wrap">{html.escape(str(p.get('title', 'No title')))}</td>
                                     <td>{p.get('publication_year', 'N/A')}</td>
-                                    <td>{', '.join([html.escape(a) for a in p.get('authors', [])[:3]])}{' +' + str(len(p.get('authors', []))-3) if len(p.get('authors', [])) > 3 else ''}</td>
-                                    <td>{html.escape(p.get('journal', 'Unknown')[:40])}{'...' if len(p.get('journal', '')) > 40 else ''}</td>
+                                    <td>{', '.join([html.escape(str(a)) for a in p.get('authors', [])])}</td>
+                                    <td>{html.escape(str(p.get('journal', 'Unknown')))}</td>
                                     <td>{p.get('cited_by_count', 0)}</td>
                                     <td>{'✅' if p.get('wos_indexed') else ''}</td>
                                     <td>{'✅' if p.get('scopus_indexed') else ''}</td>
-                                    <td><a href="https://doi.org/{html.escape(p.get('doi', ''))}" target="_blank" class="doi-link">{html.escape((p.get('doi') or 'N/A')[:20])}...</a></td>
+                                    <td><a href="https://doi.org/{html.escape(str(p.get('doi', '')))}" target="_blank" class="doi-link">{html.escape(str(p.get('doi', 'N/A')))}</a></td>
                                 </tr>
                                 '''
                                 for i, p in enumerate(enriched_papers)
