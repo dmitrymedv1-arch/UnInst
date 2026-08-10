@@ -3669,7 +3669,7 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
 
 <script>
     // ===== TOGGLE SECTIONS =====
-    function toggleSection(sectionId) {
+    function toggleSection(sectionId) {{
         var content = document.getElementById(sectionId);
         var indicator = document.getElementById(sectionId.replace('_content', '_indicator'));
         if (content) {{
@@ -3682,7 +3682,7 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
                 if (indicator) indicator.textContent = '▶';
             }}
         }}
-    }
+    }}
     
     // ===== FILTER PUBLICATIONS =====
     function filterPublications() {
