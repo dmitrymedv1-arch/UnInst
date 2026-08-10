@@ -3672,16 +3672,16 @@ def generate_institution_html_report(data: Dict, validation: Dict, institution_n
     function toggleSection(sectionId) {
         var content = document.getElementById(sectionId);
         var indicator = document.getElementById(sectionId.replace('_content', '_indicator'));
-        if (content) {
-            if (content.style.display === 'none' || content.style.display === '') {
+        if (content) {{
+            if (content.style.display === 'none' || content.style.display === '') {{
                 content.style.display = 'block';
                 if (indicator) indicator.textContent = '▼';
                 content.style.animation = 'fadeInUp 0.4s ease forwards';
-            } else {
+            }} else {{
                 content.style.display = 'none';
                 if (indicator) indicator.textContent = '▶';
-            }
-        }
+            }}
+        }}
     }
     
     // ===== FILTER PUBLICATIONS =====
